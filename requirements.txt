@@ -1,0 +1,17 @@
+# pip install로 설치할 패키지 목록
+
+streamlit
+langchain
+langchain-openai
+langgraph
+transformers
+torch
+python-dotenv
+pillow
+pytesseract
+pymupdf
+requests
+langchain-community
+langchain-huggingface
+faiss-cpu
+sentence-transformers

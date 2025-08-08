@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# 환경변수/비밀
+.env
+
+# VSCode 설정
+.vscode/
+
+# 벡터스토어/임시 인덱스
+vector_store/
+*.faiss
+*.pkl
