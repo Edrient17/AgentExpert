@@ -53,7 +53,7 @@ def evaluate_docs(docs, q_summary, query, llm, chain):
 
 def supervisor_team2(state: dict) -> dict:
     print(f"🔍 Team 2 Supervisor 시작")
-    llm = ChatOpenAI(model="gpt-4", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     prompt = PromptTemplate.from_template(PROMPT)
     chain = prompt | llm
 

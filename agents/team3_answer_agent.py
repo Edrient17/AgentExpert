@@ -36,7 +36,7 @@ def agent_team3_answer_generation(state: dict) -> dict:
 
     combined_docs = "\n\n".join([doc.page_content for doc in docs])
 
-    llm = ChatOpenAI(model="gpt-4")
+    llm = ChatOpenAI(model="gpt-4o-mini")
     prompt = PromptTemplate.from_template(ANSWER_PROMPT)
     chain = prompt | llm
 
