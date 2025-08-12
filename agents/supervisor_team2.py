@@ -51,7 +51,7 @@ def _get_llm() -> ChatOpenAI:
     return ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 # ===== Docs util =====
-def _combine_docs(docs: List[Union[str, object]], max_chars: int = 6000) -> str:
+def _combine_docs(docs: List[Union[str, object]], max_chars: int = 10000) -> str:
     """Accepts langchain Document or str. Concatenate with truncation."""
     contents: List[str] = []
     for d in docs:
