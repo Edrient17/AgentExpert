@@ -32,12 +32,16 @@ TASKS
 3) rag_queries: Generate 2–4 short, diverse, search-friendly English queries (≤15 words each).
    - Mix styles (keyword, semantic paraphrase, entity-focused, time-bounded) when applicable.
    - Do NOT invent facts not implied by the user input. Return 2–4 items only.
-4) output_format: ALWAYS output a 2-item array [type, language].
+4) output_format: ALWAYS return a 2-item array [type, language].
    - type ∈ ["report","table","bulleted","json","qa"]
    - language ∈ ["ko","en"]
-   - If unclear, use ["qa","ko"].
+   - Defaults apply independently:
+       • If type is missing/unclear/invalid → use "qa".
+       • If language is missing/unclear/invalid → use "ko".
+   - If only one of (type, language) can be inferred, fill the other with its default.
+   - Normalize to lowercase. Return exactly two items, no more, no less.
 
-OUTPUT (JSON ONLY):
+STRICT OUTPUT (JSON ONLY, no prose):
 {schema}
 
 USER INPUT:
