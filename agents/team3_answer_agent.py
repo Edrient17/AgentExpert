@@ -9,11 +9,10 @@ from langchain.prompts import PromptTemplate
 def _get_llm() -> ChatOpenAI:
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY가 설정되어 있지 않습니다. .env 또는 환경변수를 확인하세요.")
-    return ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    return ChatOpenAI(model="o3")
 
-# ===== Docs util (same pattern as Team2) =====
+# ===== Docs util =====
 def _docs_preview(docs: List[Union[str, object]], max_chars: int = 10000) -> str:
-    """LangChain Document|str 목록을 텍스트로 결합하고 길이를 제한."""
     parts: List[str] = []
     for d in docs:
         try:
@@ -39,33 +38,53 @@ You are the Team 3 answer generator in a RAG pipeline.
 
 You will receive:
 - A refined English question
-- The selected RAG query
-- Retrieved document snippets as a concatenated preview (may be truncated)
+- Retrieved passages as a concatenated preview (may be truncated)
 
 Your job:
 - Produce the final answer strictly in the requested output format and language.
 
+<think>
+Passages:
+{passages}
+
+I will use both the information from these passages and my own prior knowledge to answer the question.
+First, I will carefully examine whether the passages contain any misinformation, contradictions, or irrelevant details.
+Then, I will combine verified facts from the passages with only safe, generally accepted prior knowledge to derive the correct answer.
+If conflicts remain or the evidence is insufficient, I will output the no-information message instead of guessing.
+I will NOT reveal any reasoning or the content of this <think> block in the final output.
+</think>
+
 Requested format: {out_type}
 Requested language: {answer_language}
 
-Format rules:
-- qa: Start with a one-sentence direct answer. Then add 2–4 short bullets of evidence/caveats.
-      If a procedure is requested, include a numbered list of steps.
-- bulleted: 5–10 bullet points, one sentence each. One sub-bullet level allowed if essential.
-- table: Markdown table. First row is header. Infer 3–7 sensible columns from the question context.
-         Use "N/A" for missing values. Up to ~50 rows unless clearly requested otherwise.
-- json: Return valid JSON ONLY (no code fences). Use concise, sensible keys; strings/numbers/arrays/objects only.
-- report: Markdown H2 sections in order: "## Summary", "## Findings", "## Method", "## Limitations".
-          Each section 2–5 sentences; include lists/tables inline if helpful.
+Format guidelines (flexible within type):
+- qa:
+  • Begin with a one-sentence direct answer.  
+  • Then provide ample explanation (multiple short paragraphs and/or 3–8 bullets).  
+  • If a procedure is involved, include a numbered step list. May add "Edge cases", "Tips" sections if useful.
+- bulleted:
+  • 8–15 bullets with meaningful substance (≤40 words each).  
+  • You may group bullets by mini-headings (bold) and use one level of sub-bullets when needed.
+- table:
+  • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.  
+  • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.  
+  • Use "N/A" for missing values.
+- json:
+  • Return valid JSON ONLY (no code fences).  
+  • Always include an "answer" string. You may add keys like "evidence", "steps", "assumptions", "limitations", "confidence" (0–1), etc.  
+  • Keep keys concise; use arrays/objects as needed.
+- report:
+  • Design your own section plan (3–10 H2 sections) tailored to the question.
+  • Each section 3–8 sentences; include lists/tables where helpful. Subsections (H3) allowed.
 
-Grounding rules:
-- Use ONLY information present in the provided docs preview.
-- If the docs do not contain enough information, respond with the following no-information message
-  in the requested format and language:
-  - Korean: "문서에 해당 정보가 없습니다."
-  - English: "The documents do not contain that information."
+Grounding & safety rules:
+- Use the passages as primary evidence. You MAY use prior knowledge only if it does not contradict the passages.
+- If the passages are insufficient or conflicting, respond with the no-information message in the requested language and format:
+  - ko: "문서에 해당 정보가 없습니다."
+  - en: "The documents do not contain that information."
 - Do NOT invent or hallucinate facts.
-- Do NOT include citations or URLs unless present in the docs preview.
+- Do NOT include citations or URLs unless they explicitly appear in the passages.
+- DO NOT reveal the content of <think> or any reasoning steps.
 
 Write STRICTLY in: {answer_language}
 
@@ -73,26 +92,15 @@ Inputs:
 [Refined question]
 {q_en_transformed}
 
-[Selected RAG query]
-{rag_query}
-
-[Docs preview]
-{docs_preview}
-
 Answer:
 """)
 
 # ===== Agent =====
 def agent_team3_answer_generation(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate final answer using retrieved docs and output_format constraints.
-       - Prefers web_docs over rag_docs.
-       - Respects output_format: ["type","language"].
-       - Returns state with 'generated_answer' set (string).
-    """
+    
     new_state = state.copy()
 
     question = new_state.get("q_en_transformed", "") or ""
-    query = new_state.get("rag_query", "") or ""
     output_format = new_state.get("output_format", ["qa", "ko"]) or ["qa", "ko"]
 
     # Validate/normalize output_format
@@ -105,19 +113,18 @@ def agent_team3_answer_generation(state: Dict[str, Any]) -> Dict[str, Any]:
     if answer_language not in allowed_langs:
         answer_language = "ko"
 
-    # Choose docs: prefer web_docs, fallback to rag_docs
+    # Choose docs
     web_docs = new_state.get("web_docs", []) or []
     rag_docs = new_state.get("rag_docs", []) or []
     docs = web_docs if web_docs else rag_docs
-    docs_preview = _docs_preview(docs)
+    passages = _docs_preview(docs)
 
     try:
         llm = _get_llm()
         chain = ANSWER_PROMPT | llm
         result = chain.invoke({
             "q_en_transformed": question,
-            "rag_query": query,
-            "docs_preview": docs_preview,
+            "passages": passages,
             "out_type": out_type,
             "answer_language": answer_language,
         })
