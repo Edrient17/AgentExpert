@@ -2,37 +2,11 @@
 from typing import List, Union, Dict, Any
 import os
 
-from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 
-# ===== Lazy LLM =====
-def _get_llm() -> ChatOpenAI:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY가 설정되어 있지 않습니다. .env 또는 환경변수를 확인하세요.")
-    return ChatOpenAI(model="o3")
+from utils import get_llm, format_docs_for_prompt
 
-# ===== Docs util =====
-def _docs_preview(docs: List[Union[str, object]], max_chars: int = 10000) -> str:
-    parts: List[str] = []
-    for d in docs:
-        try:
-            text = getattr(d, "page_content", None)
-            if text is None and isinstance(d, str):
-                text = d
-            if text:
-                t = str(text).strip()
-                if t:
-                    parts.append(t)
-        except Exception:
-            continue
-    joined = "\n\n---\n\n".join(parts)
-    if not joined:
-        return "[NO CONTENT]"
-    if len(joined) > max_chars:
-        return joined[:max_chars] + "\n\n...[truncated]..."
-    return joined
-
-# ===== Answer prompt (EN) =====
+# ===== Answer prompt =====
 ANSWER_PROMPT = PromptTemplate.from_template("""
 You are the Team 3 answer generator in a RAG pipeline.
 
@@ -117,10 +91,12 @@ def agent_team3_answer_generation(state: Dict[str, Any]) -> Dict[str, Any]:
     web_docs = new_state.get("web_docs", []) or []
     rag_docs = new_state.get("rag_docs", []) or []
     docs = web_docs if web_docs else rag_docs
-    passages = _docs_preview(docs)
+    
+    passages = format_docs_for_prompt(docs)
 
     try:
-        llm = _get_llm()
+        llm = get_llm(model_name="gpt-4o", temperature=0.1) 
+        
         chain = ANSWER_PROMPT | llm
         result = chain.invoke({
             "q_en_transformed": question,
@@ -132,5 +108,5 @@ def agent_team3_answer_generation(state: Dict[str, Any]) -> Dict[str, Any]:
         return new_state
     except Exception as e:
         print(f"❌ Team 3 Agent error: {e}")
-        new_state["generated_answer"] = "답변 생성 실패" if answer_language == "ko" else "Answer generation failed"
+        new_state["generated_answer"] = "Answer generation failed" if answer_language == "ko" else "Answer generation failed"
         return new_state

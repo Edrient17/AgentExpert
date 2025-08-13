@@ -3,11 +3,12 @@ import json
 import os
 from typing import List
 from pydantic import BaseModel, Field, ValidationError
-from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.exceptions import OutputParserException
+
+from utils import get_llm
 
 from agents.team1_query_agent import agent_team1_question_processing
 
@@ -52,11 +53,6 @@ Output schema:
 {schema}
 """).partial(schema=eval_parser.get_format_instructions())
 
-def _get_llm() -> ChatOpenAI:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY가 설정되어 있지 않습니다. .env 또는 환경변수를 확인하세요.")
-    return ChatOpenAI(model="gpt-4o-mini", temperature=0)
-
 def supervisor_team1(state: dict) -> dict:
     print("🔍 Team 1 Supervisor 시작")
     state.setdefault("status", {})
@@ -66,10 +62,12 @@ def supervisor_team1(state: dict) -> dict:
     max_attempts = 2
     current_attempts = 0
 
+    llm = get_llm()
+
     while current_attempts < max_attempts:
         attempt_no = current_attempts + 1
         print(f"⚙️ Team 1 Agent 실행 (시도 {attempt_no}/{max_attempts})")
-        # 필요시 merge 형태로 변경해도 됨: state.update(...)
+
         state = RunnableLambda(agent_team1_question_processing).invoke(state)
 
         if not state.get("q_validity", False):
@@ -92,7 +90,6 @@ def supervisor_team1(state: dict) -> dict:
             continue
 
         try:
-            llm = _get_llm()
             chain = EVAL_PROMPT | llm | eval_parser
             out = chain.invoke({
                 "user_input": state.get("user_input", ""),
@@ -102,7 +99,6 @@ def supervisor_team1(state: dict) -> dict:
                 "rag_queries_json": json.dumps(rag_queries, ensure_ascii=False),
             })
 
-            # ✅ 반환 정규화: dict / BaseModel / str(JSON) 모두 수용
             if isinstance(out, Team1EvalResult):
                 result = out
             elif isinstance(out, dict):

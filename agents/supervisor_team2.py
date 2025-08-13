@@ -10,18 +10,19 @@ from langchain_core.runnables import RunnableLambda
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.exceptions import OutputParserException
 
+from utils import get_llm, format_docs_for_prompt
 from agents.team2_rag_agent import agent_team2_rag_search
 from agents.team2_web_agent import agent_team2_web_search
 
-# ===== Eval schema: booleans only =====
+# ===== Eval schema =====
 class Team2DocEvalResult(BaseModel):
     semantic_relevance: bool
     is_detailed: bool
-    error_message: str = ""  # 문제가 있으면 간결 한국어, 없으면 ""
+    error_message: str = ""
 
 eval_parser = JsonOutputParser(pydantic_object=Team2DocEvalResult)
 
-# ===== Evaluation prompt (EN) =====
+# ===== Evaluation prompt =====
 EVAL_PROMPT = PromptTemplate.from_template("""
 You are the Team2 Supervisor evaluator. Given the question summary and retrieved docs,
 decide whether the docs are good enough to support answering the question.
@@ -44,35 +45,9 @@ Output schema:
 {schema}
 """).partial(schema=eval_parser.get_format_instructions())
 
-# ===== Lazy LLM =====
-def _get_llm() -> ChatOpenAI:
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY가 설정되어 있지 않습니다. .env 또는 환경변수를 확인하세요.")
-    return ChatOpenAI(model="gpt-4o-mini", temperature=0)
-
-# ===== Docs util =====
-def _combine_docs(docs: List[Union[str, object]], max_chars: int = 10000) -> str:
-    """Accepts langchain Document or str. Concatenate with truncation."""
-    contents: List[str] = []
-    for d in docs:
-        try:
-            text = getattr(d, "page_content", None)
-            if text is None and isinstance(d, str):
-                text = d
-            if text:
-                text = str(text).strip()
-                if text:
-                    contents.append(text)
-        except Exception:
-            continue
-    joined = "\n\n---\n\n".join(contents)
-    if len(joined) > max_chars:
-        return joined[:max_chars] + "\n\n...[truncated]..."
-    return joined
-
-def _eval_docs(q_en: str, query: str, docs: List[Union[str, object]]) -> Team2DocEvalResult:
-    docs_preview = _combine_docs(docs) if docs else "[NO CONTENT]"
-    llm = _get_llm()
+def _eval_docs(llm: ChatOpenAI, q_en: str, query: str, docs: List[Union[str, object]]) -> Team2DocEvalResult:
+    """LLM을 이용해 검색된 문서의 품질을 평가."""
+    docs_preview = format_docs_for_prompt(docs) if docs else "[NO CONTENT]"
     chain = EVAL_PROMPT | llm | eval_parser
     out = chain.invoke({
         "q_en_transformed": q_en or "",
@@ -99,31 +74,35 @@ def supervisor_team2(state: dict) -> dict:
 
     if not query.strip():
         state["status"]["team2"] = "fail"
-        state["error_message"] = "Team2: rag_query가 비어 있어 검색을 수행할 수 없습니다."
+        state["error_message"] = "Team2: rag_query is empty."
         return state
 
     max_attempts = 2
+    llm = get_llm()
 
     # === 1) RAG: up to 2 attempts ===
     for attempt in range(1, max_attempts + 1):
         print(f"🔎 RAG 문서 검색 ({attempt}/{max_attempts})")
         rag_state = RunnableLambda(agent_team2_rag_search).invoke(state)
         if isinstance(rag_state, dict):
-            state.update(rag_state)  # merge safely
+            state.update(rag_state)
 
         docs = state.get("rag_docs", []) or []
+
         if not docs:
-            state["error_message"] = "Team2: RAG 결과가 비어 있습니다."
+            print("... RAG 결과 없음. 웹 검색으로 전환합니다.")
+            state["error_message"] = "Team2: RAG results are empty. Falling back to web search."
+            break
 
         try:
-            result = _eval_docs(q_summary, query, docs)
+            result = _eval_docs(llm, q_summary, query, docs)
         except (ValidationError, OutputParserException) as e:
             print(f"❌ RAG 평가 파싱 오류: {e}")
-            state["error_message"] = "Team2: RAG 평가 결과 파싱 실패"
+            state["error_message"] = "Team2: RAG evaluation result parsing failed"
             continue
         except Exception as e:
             print(f"❌ RAG 평가 예외: {e}")
-            state["error_message"] = "Team2: RAG 평가 중 알 수 없는 오류"
+            state["error_message"] = "Team2: Unknown error occurred during RAG evaluation"
             continue
 
         passed = bool(result.semantic_relevance) and bool(result.is_detailed)
@@ -133,31 +112,34 @@ def supervisor_team2(state: dict) -> dict:
             state["error_message"] = ""
             return state
         else:
-            print("🔁 RAG 평가 미통과 (semantic_relevance="
-                  f"{result.semantic_relevance}, is_detailed={result.is_detailed})")
-            state["error_message"] = (result.error_message or
-                                      "Team2: RAG 문서가 관련성/세부성이 부족합니다.").strip()
+            print(f"🔁 RAG 평가 미통과 (semantic_relevance={result.semantic_relevance}, is_detailed={result.is_detailed})")
+            state["error_message"] = (result.error_message or "Team2: RAG document lacks relevance/detail.").strip()
 
     # === 2) WEB: up to 2 attempts ===
+    print("🌐 WEB 문서 검색 시작")
     for attempt in range(1, max_attempts + 1):
-        print(f"🌐 WEB 문서 검색 ({attempt}/{max_attempts})")
+        print(f"-> WEB 문서 검색 ({attempt}/{max_attempts})")
         web_state = RunnableLambda(agent_team2_web_search).invoke(state)
         if isinstance(web_state, dict):
-            state.update(web_state)  # merge safely
+            state.update(web_state)
 
         docs = state.get("web_docs", []) or []
         if not docs:
-            state["error_message"] = "Team2: 웹 검색 결과가 비어 있습니다."
+            state["error_message"] = "Team2: WEB search results are empty."
+            if attempt < max_attempts:
+                continue
+            else:
+                break
 
         try:
-            result = _eval_docs(q_summary, query, docs)
+            result = _eval_docs(llm, q_summary, query, docs)
         except (ValidationError, OutputParserException) as e:
             print(f"❌ WEB 평가 파싱 오류: {e}")
-            state["error_message"] = "Team2: WEB 평가 결과 파싱 실패"
+            state["error_message"] = "Team2: WEB evaluation result parsing failed"
             continue
         except Exception as e:
             print(f"❌ WEB 평가 예외: {e}")
-            state["error_message"] = "Team2: WEB 평가 중 알 수 없는 오류"
+            state["error_message"] = "Team2: Unknown error occurred during WEB evaluation"
             continue
 
         passed = bool(result.semantic_relevance) and bool(result.is_detailed)
@@ -167,14 +149,12 @@ def supervisor_team2(state: dict) -> dict:
             state["error_message"] = ""
             return state
         else:
-            print("🔁 WEB 평가 미통과 (semantic_relevance="
-                  f"{result.semantic_relevance}, is_detailed={result.is_detailed})")
-            state["error_message"] = (result.error_message or
-                                      "Team2: 웹 문서가 관련성/세부성이 부족합니다.").strip()
+            print(f"🔁 WEB 평가 미통과 (semantic_relevance={result.semantic_relevance}, is_detailed={result.is_detailed})")
+            state["error_message"] = (result.error_message or "Team2: WEB document lacks relevance/detail.").strip()
 
     # === All failed ===
     print("❌ Team 2 최종 실패")
     state["status"]["team2"] = "fail"
-    if not state.get("error_message"):
-        state["error_message"] = "Team2: 적절한 문서를 찾지 못했습니다."
+    if not state.get("error_message") or "RAG" in state["error_message"]:
+         state["error_message"] = "Team2: No proper document found after RAG and WEB search."
     return state
