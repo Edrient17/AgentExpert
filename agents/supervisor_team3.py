@@ -39,8 +39,7 @@ Inputs:
 Criteria:
 1) rules_compliance (bool): Does the answer follow the requested output_format?
    - type ∈ ["qa","bulleted","table","json","report"]:
-     * qa: One-sentence direct answer + 2–4 short bullets (evidence/caveats). Steps as a numbered list if procedure requested.
-     * bulleted: 5–10 bullet points, one sentence each. One sub-bullet level allowed if essential.
+     * qa: Starts with a one-sentence direct answer. This is followed by a helpful, supplementary explanation which can be in the form of bullet points, paragraphs, or a numbered list. The length and detail of the explanation are flexible as long as they are relevant.
      * table: Markdown table with a header row; 3–7 sensible columns; "N/A" for missing values.
      * json: Valid JSON ONLY (no code fences). Concise keys; strings/numbers/arrays/objects only.
      * report: Markdown H2 sections in order: "## Summary", "## Findings", "## Method", "## Limitations".

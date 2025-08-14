@@ -6,9 +6,10 @@ from langchain.prompts import PromptTemplate
 
 from utils import get_llm, format_docs_for_prompt
 
-# ===== Answer prompt =====
-ANSWER_PROMPT = PromptTemplate.from_template("""
-You are the Team 3 answer generator in a RAG pipeline.
+# 1. DOCS 기반 답변 생성을 위한 프롬프트
+DOCS_ANSWER_PROMPT = PromptTemplate.from_template("""
+You are the Team 3 answer generator in a Multi-Agent Q&A pipeline.
+Your primary task is to synthesize an answer based on the provided passages.
 
 You will receive:
 - A refined English question
@@ -33,19 +34,19 @@ Requested language: {answer_language}
 
 Format guidelines (flexible within type):
 - qa:
-  • Begin with a one-sentence direct answer.  
-  • Then provide ample explanation (multiple short paragraphs and/or 3–8 bullets).  
+  • Begin with a one-sentence direct answer.
+  • Then provide ample explanation (multiple short paragraphs and/or 3–8 bullets).
   • If a procedure is involved, include a numbered step list. May add "Edge cases", "Tips" sections if useful.
 - bulleted:
-  • 8–15 bullets with meaningful substance (≤40 words each).  
+  • 8–15 bullets with meaningful substance (≤40 words each).
   • You may group bullets by mini-headings (bold) and use one level of sub-bullets when needed.
 - table:
-  • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.  
-  • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.  
+  • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.
+  • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.
   • Use "N/A" for missing values.
 - json:
-  • Return valid JSON ONLY (no code fences).  
-  • Always include an "answer" string. You may add keys like "evidence", "steps", "assumptions", "limitations", "confidence" (0–1), etc.  
+  • Return valid JSON ONLY (no code fences).
+  • Always include an "answer" string. You may add keys like "evidence", "steps", "assumptions", "limitations", "confidence" (0–1), etc.
   • Keep keys concise; use arrays/objects as needed.
 - report:
   • Design your own section plan (3–10 H2 sections) tailored to the question.
@@ -56,6 +57,7 @@ Grounding & safety rules:
 - If the passages are insufficient or conflicting, respond with the no-information message in the requested language and format:
   - ko: "문서에 해당 정보가 없습니다."
   - en: "The documents do not contain that information."
+- Do NOT add any prefixes about requested format prior to the answer.
 - Do NOT invent or hallucinate facts.
 - Do NOT include citations or URLs unless they explicitly appear in the passages.
 - DO NOT reveal the content of <think> or any reasoning steps.
@@ -69,9 +71,53 @@ Inputs:
 Answer:
 """)
 
+# 2. 일반 상식 기반 답변 생성을 위한 새로운 프롬프트
+GENERAL_ANSWER_PROMPT = PromptTemplate.from_template("""
+You are a helpful AI assistant. Your task is to answer the user's question using your own internal knowledge.
+There are no external documents provided for this question.
+
+Your job:
+- Produce the final answer strictly in the requested output format and language.
+
+Requested format: {out_type}
+Requested language: {answer_language}
+
+Grounding & safety rules:
+- Do NOT add any prefixes about requested format prior to the answer.
+                                                                                                                                                         
+Format guidelines (flexible within type):
+- qa:
+  • Begin with a one-sentence direct answer.
+  • Then provide ample explanation (multiple short paragraphs and/or 3–8 bullets).
+  • If a procedure is involved, include a numbered step list. May add "Edge cases", "Tips" sections if useful.
+- bulleted:
+  • 8–15 bullets with meaningful substance (≤40 words each).
+  • You may group bullets by mini-headings (bold) and use one level of sub-bullets when needed.
+- table:
+  • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.
+  • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.
+  • Use "N/A" for missing values.
+- json:
+  • Return valid JSON ONLY (no code fences).
+  • Always include an "answer" string. You may add keys like "evidence", "steps", "assumptions", "limitations", "confidence" (0–1), etc.
+  • Keep keys concise; use arrays/objects as needed.
+- report:
+  • Design your own section plan (3–10 H2 sections) tailored to the question.
+  • Each section 3–8 sentences; include lists/tables where helpful. Subsections (H3) allowed.
+
+Write STRICTLY in: {answer_language}
+
+Inputs:
+[Refined question]
+{q_en_transformed}
+
+Answer:
+""")
+
+
 # ===== Agent =====
 def agent_team3_answer_generation(state: Dict[str, Any]) -> Dict[str, Any]:
-    
+
     new_state = state.copy()
 
     question = new_state.get("q_en_transformed", "") or ""
@@ -91,22 +137,33 @@ def agent_team3_answer_generation(state: Dict[str, Any]) -> Dict[str, Any]:
     web_docs = new_state.get("web_docs", []) or []
     rag_docs = new_state.get("rag_docs", []) or []
     docs = web_docs if web_docs else rag_docs
-    
-    passages = format_docs_for_prompt(docs)
 
-    try:
-        llm = get_llm(model_name="gpt-4o", temperature=0.1) 
-        
-        chain = ANSWER_PROMPT | llm
-        result = chain.invoke({
+    if docs:
+        print("... RAG 문서를 기반으로 답변 생성")
+        prompt = DOCS_ANSWER_PROMPT
+        passages = format_docs_for_prompt(docs)
+        invoke_params = {
             "q_en_transformed": question,
             "passages": passages,
             "out_type": out_type,
             "answer_language": answer_language,
-        })
+        }
+    else:
+        print("... RAG 문서 없음. LLM 자체 지식으로 답변 생성")
+        prompt = GENERAL_ANSWER_PROMPT
+        invoke_params = {
+            "q_en_transformed": question,
+            "out_type": out_type,
+            "answer_language": answer_language,
+        }
+
+    try:
+        llm = get_llm(model_name="gpt-4o", temperature=0.1)
+        chain = prompt | llm
+        result = chain.invoke(invoke_params)
         new_state["generated_answer"] = (result.content or "").strip()
         return new_state
     except Exception as e:
         print(f"❌ Team 3 Agent error: {e}")
-        new_state["generated_answer"] = "Answer generation failed" if answer_language == "ko" else "Answer generation failed"
+        new_state["generated_answer"] = "답변 생성 실패" if answer_language == "ko" else "Answer generation failed"
         return new_state
