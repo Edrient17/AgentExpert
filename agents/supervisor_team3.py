@@ -118,6 +118,7 @@ def supervisor_team3(state: Dict) -> Dict:
             print("✅ Team 3 통과")
             state["status"]["team3"] = "pass"
             state["error_message"] = ""
+            state["next_node"] = "end" 
             return state
 
         reasons = []
