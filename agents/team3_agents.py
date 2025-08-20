@@ -152,7 +152,6 @@ def generate_answer(state: GlobalState) -> Dict[str, Any]:
             "answer_language": answer_language,
         }
 
-    # 답변 생성은 가장 강력한 모델 사용, JSON 모드 불필요
     llm = ChatOpenAI(model=config.LLM_MODEL_TEAM3, temperature=0.0)
     chain = prompt | llm
 
@@ -168,8 +167,8 @@ def generate_answer(state: GlobalState) -> Dict[str, Any]:
 class AnswerEvaluationResult(BaseModel):
     """답변 평가 노드의 LLM 결과 스키마"""
     rules_compliance: bool
-    question_coverage: bool
-    logical_structure: bool
+    question_coverage: float
+    logical_structure: float
     error_message: str = ""
 
 def evaluate_answer(state: GlobalState) -> Dict[str, Any]:
@@ -206,14 +205,10 @@ Inputs:
 
 Criteria:
 1) rules_compliance (bool): Does the answer follow the requested output_format?
-   - type ∈ ["qa","bulleted","table","json","report"]:
-     * qa: Starts with a one-sentence direct answer. This is followed by a helpful, supplementary explanation which can be in the form of bullet points, paragraphs, or a numbered list. The length and detail of the explanation are flexible as long as they are relevant.
-     * table: Markdown table with a header row; 3–7 sensible columns; "N/A" for missing values.
-     * json: Valid JSON ONLY (no code fences). Concise keys; strings/numbers/arrays/objects only.
-     * report: Markdown H2 sections in order: "## Summary", "## Findings", "## Method", "## Limitations".
-   - language ∈ ["ko","en"]: The entire answer must be in the requested language.
-2) question_coverage (bool): Does the answer appropriately address the refined question (intent, scope, constraints)?
-3) logical_structure (bool): Is the answer coherent and logically well-structured for a reliable response?
+   - type ∈ ["qa","bulleted","table","json","report"]
+   - language ∈ ["ko","en"]: The answer must be in the requested language.
+2) question_coverage (float): Score from 0.0 to 1.0. How well does the answer address the refined question (intent, scope, constraints)?
+3) logical_structure (float): Score from 0.0 to 1.0. How coherent and logically well-structured is the answer?
 
 Return JSON ONLY with:
 {schema}
@@ -235,15 +230,24 @@ Return JSON ONLY with:
         result = AnswerEvaluationResult.model_validate(result_dict)
 
         # 세 가지 평가 기준을 모두 통과해야 최종 'pass'
-        passed = result.rules_compliance and result.question_coverage and result.logical_structure
+        passed = (
+            result.rules_compliance and
+            result.question_coverage >= 0.7 and
+            result.logical_structure >= 0.7
+        )
+
         if passed:
             return {"status": {"team3": "pass"}}
         else:
             current_retries = state.get("team3_retries", 0)
+
             reasons = []
-            if not result.rules_compliance: reasons.append("format")
-            if not result.question_coverage: reasons.append("coverage")
-            if not result.logical_structure: reasons.append("logic")
+            if not result.rules_compliance:
+                reasons.append("format")
+            if result.question_coverage < 0.7:
+                reasons.append(f"coverage({result.question_coverage:.2f})")
+            if result.logical_structure < 0.7:
+                reasons.append(f"logic({result.logical_structure:.2f})")
             
             error_msg = result.error_message or f"Team3: 답변 품질 미달 ({', '.join(reasons)})"
             return {

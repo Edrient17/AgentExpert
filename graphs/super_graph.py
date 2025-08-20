@@ -25,27 +25,12 @@ You are a meticulous and safety-conscious router in a Q&A pipeline. Your critica
 
 Your response must be a single word: either 'retrieve' or 'skip'.
 
-**Decision Criteria:**
+Decision Criteria:
 
-1.  **retrieve**: Choose this if the question involves any of the following:
-    * **Specific Products/Services:** Mentions specific models, brands, software versions (e.g., "ASUS Z790 motherboard", "Photoshop 2024", "LangGraph v0.1").
-    * **Technical Procedures:** Asks for step-by-step instructions, troubleshooting, or "how-to" guides (e.g., "How to replace a CPU?", "My code is throwing a NullPointerException").
-    * **Recent Events or Data:** Refers to events after your last knowledge update or requires real-time information (e.g., "What were the latest tech stock trends this week?").
-    * **Safety-Critical Information:** Answering incorrectly could have negative consequences (e.g., medical advice, financial guidance, hardware modifications).
-    * **Comparisons or Recommendations:** Asks for the "best" product, comparisons between items, or specific recommendations.
+1.  retrieve: If the question requires external documents/knowledge (e.g., "Tell me about LangGraph"). 
+2.  skip:  If the question does NOT require external knowledge (e.g., "Hi? What's your name?", "What is 2+2?"). 
 
-2.  **skip**: Choose this *only* for questions that are definitively answerable with universal, timeless general knowledge.
-    * **General Knowledge:** "What is the capital of France?", "Explain the theory of relativity."
-    * **Simple Greetings & Conversations:** "Hello", "How are you?"
-    * **Basic Math or Logic:** "What is 5 + 7?"
-    * **Creative Writing or Brainstorming:** "Write a poem about the sea."
-
-**Your thought process:**
-First, analyze the user's question for keywords related to products, technical actions, or time-sensitive topics.
-Second, evaluate the risk of providing an outdated or incorrect answer based on general knowledge alone. If there is any risk, err on the side of caution.
-Finally, conclude with 'retrieve' or 'skip'.
-
-**When in doubt, always choose 'retrieve'.**
+When in doubt, always choose 'retrieve'.
 
 Question: "{question}"
 """).partial(question=question)

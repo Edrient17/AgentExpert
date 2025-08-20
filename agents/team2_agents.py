@@ -48,8 +48,8 @@ def web_search(state: GlobalState) -> Dict[str, Any]:
 
 class DocEvaluationResult(BaseModel):
     """문서 평가 노드의 LLM 결과 스키마"""
-    semantic_relevance: bool
-    is_detailed: bool
+    semantic_relevance: float = Field(ge=0.0, le=1.0, description="문서가 질문 의도와 제약에 얼마나 관련이 있는지 [0,1]")
+    is_detailed: float = Field(ge=0.0, le=1.0, description="문서가 충분히 구체적이고 세부적인지를 나타내는 점수 [0,1]")
     error_message: str = ""
 
 def evaluate_documents(state: GlobalState) -> Dict[str, Any]:
@@ -89,8 +89,8 @@ decide whether the docs are good enough to support answering the question.
 {docs_preview}
 
 Return JSON ONLY with the following fields:
-- semantic_relevance (bool): Do the docs match the user's intent and constraints?
-- is_detailed (bool): Do the docs collectively contain enough specifics to answer the question reliably?
+- semantic_relevance (float in [0,1]): Do the docs match the user's intent and constraints?
+- is_detailed (float in [0,1]): Do the docs collectively contain enough specifics to answer the question reliably?
 - error_message (str): If anything is wrong (empty/irrelevant/too generic/duplicated), write a short Korean message; else "".
 
 Output schema:
@@ -111,7 +111,15 @@ Output schema:
             "docs_preview": docs_preview
         })
         result = DocEvaluationResult.model_validate(result_dict)
-        passed = result.semantic_relevance and result.is_detailed
+        
+        # 점수 검증
+        if not (0.0 <= result.semantic_relevance <= 1.0):
+            raise ValueError("semantic_relevance must be in [0,1]")
+        if not (0.0 <= result.is_detailed <= 1.0):
+            raise ValueError("is_detailed must be in [0,1]")
+
+        # 변경: 통과 조건 점수 기반
+        passed = (result.semantic_relevance >= 0.7) and (result.is_detailed >= 0.7)
 
         if passed:
             return {"status": {"team2": "pass"}}

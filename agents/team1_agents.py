@@ -39,7 +39,7 @@ TASKS
 1) q_validity: Decide if the user input is a valid, answerable question (True/False).
    - false if too vague / missing constraints / unsafe.
 2) q_en_transformed: Rewrite the question into clear English (preserve domain terms, numbers, units).
-3) rag_queries: Generate 2–4 short, diverse, search-friendly English queries (≤15 words each).
+3) rag_queries: Generate 2–4 short, diverse, search-friendly Korean queries (≤15 words each).
    - Mix styles (keyword, semantic paraphrase, entity-focused, time-bounded) when applicable.
    - Do NOT invent facts not implied by the user input. Return 2–4 items only.
 4) output_format: ALWAYS return a 2-item array [type, language].
@@ -81,7 +81,7 @@ USER INPUT:
 
 class QuestionEvaluationResult(BaseModel):
     """질문 평가 노드의 LLM 결과 스키마"""
-    semantic_alignment: bool
+    semantic_alignment: float = Field(ge=0.0, le=1.0, description="사용자 입력과 q_en_transformed의 의미적 정합성 점수 [0,1]")
     format_compliance: bool
     rag_query_scores: List[float] = Field(default_factory=list)
     error_message: str = ""
@@ -95,6 +95,7 @@ def evaluate_question(state: GlobalState) -> Dict[str, Any]:
     q_validity = state.get("q_validity", False)
     q_en_transformed = state.get("q_en_transformed", "")
     rag_queries = state.get("rag_queries", [])
+    output_format = state.get("output_format", ["qa", "ko"])
 
     if not q_validity or not all([user_input, q_en_transformed, rag_queries]):
          current_retries = state.get("team1_retries", 0)
@@ -125,7 +126,8 @@ You are the Team1 Supervisor evaluator. Using the information below, make binary
 {rag_queries_json}
 
 Criteria:
-1) semantic_alignment (bool): Does q_en_transformed accurately reflect the meaning and constraints of user_input?
+1) semantic_alignment (float in [0,1]): A continuous score for how accurately q_en_transformed reflects the meaning and constraints of user_input.
+   - 1.0 = perfectly faithful; 0.0 = unrelated/incorrect.
 2) format_compliance (bool): Follow these steps IN ORDER to decide:
    a) First, analyze [User Input]. Does it explicitly request a specific output format or language (e.g., "표로", "영어로", "in a table", "in English")?
    b) **If the user SPECIFIED a format:** `format_compliance` is TRUE if [output_format] correctly matches the user's request. **The [default_format] is IRRELEVANT and should be ignored in this case.**
@@ -152,7 +154,7 @@ Output schema:
         result_dict = chain.invoke({
             "user_input": user_input,
             "q_en_transformed": q_en_transformed,
-            "output_format": json.dumps(state.get("output_format", default_format), ensure_ascii=False),
+            "output_format": json.dumps(output_format, ensure_ascii=False),
             "default_format": json.dumps(default_format, ensure_ascii=False),
             "rag_queries_json": json.dumps(rag_queries, ensure_ascii=False)
         })
@@ -161,8 +163,10 @@ Output schema:
         # Python-side validation
         if len(result.rag_query_scores) != len(rag_queries):
             raise ValueError("Score list length does not match query list length.")
+        if not (0.0 <= result.semantic_alignment <= 1.0):
+            raise ValueError("semantic_alignment must be within [0,1].")
 
-        passed = result.semantic_alignment and result.format_compliance
+        passed = (result.semantic_alignment >= 0.8) and result.format_compliance
         if passed:
             # Find the best query using the scores
             best_idx = max(range(len(result.rag_query_scores)), key=lambda i: result.rag_query_scores[i])
@@ -172,9 +176,13 @@ Output schema:
             }
         else:
             current_retries = state.get("team1_retries", 0)
+            # error_message가 비어 있고 불합격 사유가 점수 때문이라면 보조 메시지 제공
+            err = result.error_message or (
+                "Team1: 평가 기준 미달 (semantic_alignment < 0.8 또는 format_compliance=false)"
+            )
             return {
                 "status": {"team1": "fail"},
-                "error_message": result.error_message or "Team1: 평가 기준 미달",
+                "error_message": err,
                 "team1_retries": current_retries + 1
             }
     except Exception as e:
