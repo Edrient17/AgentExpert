@@ -1,37 +1,53 @@
+
 # agents/team1_agents.py
 
 import json
+import uuid
 from typing import List, Dict, Any
 
-from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field, ValidationError
+from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
+from pydantic import BaseModel, Field
 
 import config
-from state import GlobalState
+from state import AgentState
 
-# --- Node 1: 질문 처리 (Worker) ---
-
+# --- Pydantic 스키마 (변경 없음) ---
 class QuestionProcessingResult(BaseModel):
-    """질문 처리 노드의 결과 스키마"""
     q_validity: bool = Field(description="사용자 질문이 답변 가능한 유효한 질문인지 여부 (True/False)")
     q_en_transformed: str = Field(description="사용자 질문을 명확하게 재구성한 영문 질문")
     rag_queries: List[str] = Field(description="검색에 사용할 2-4개의 다양한 영문 RAG 쿼리 후보 리스트", min_items=2, max_items=4)
     output_format: List[str] = Field(description="요청된 출력 포맷 [type, language]", min_items=2, max_items=2)
 
-def process_question(state: GlobalState) -> Dict[str, Any]:
-    """
-    사용자의 입력을 받아 유효성을 검사하고, RAG 검색에 적합한 여러 개의 쿼리를 생성합니다.
-    """
+class QuestionEvaluationResult(BaseModel):
+    semantic_alignment: float = Field(ge=0.0, le=1.0, description="사용자 입력과 q_en_transformed의 의미적 정합성 점수 [0,1]")
+    format_compliance: bool
+    rag_query_scores: List[float] = Field(default_factory=list)
+    error_message: str = ""
+
+# --- Node 1: 질문 처리 (Worker) ---
+def process_question(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 1 (질문 처리) 실행 ---")
-    user_input = state.get("user_input", "")
+
+    manager_feedback = state.get("manager_feedback")
+
+    feedback_instructions = ""
+    if manager_feedback:
+        print(f"📝 매니저 피드백 수신: {manager_feedback}")
+        feedback_instructions = f"""
+        **IMPORTANT REVISION INSTRUCTION FROM MANAGER:**
+        The previous attempt was not good enough. You MUST incorporate the following feedback into your new result:
+        "{manager_feedback}"
+        """
+        state["manager_feedback"] = None 
+        
+    user_input = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
     if not user_input.strip():
-        return {"q_validity": False, "error_message": "입력된 질문이 없습니다."}
+        return {"messages": [ToolMessage(content="fail: 입력된 질문이 없습니다.", name="team1_worker", tool_call_id=str(uuid.uuid4()))]}
 
     parser = JsonOutputParser(p_object=QuestionProcessingResult)
-    
     prompt = PromptTemplate.from_template("""
 You are the first-stage agent in a RAG pipeline.
 
@@ -39,7 +55,7 @@ TASKS
 1) q_validity: Decide if the user input is a valid, answerable question (True/False).
    - false if too vague / missing constraints / unsafe.
 2) q_en_transformed: Rewrite the question into clear English (preserve domain terms, numbers, units).
-3) rag_queries: Generate 2–4 short, diverse, search-friendly Korean queries (≤15 words each).
+3) rag_queries: Generate 2–4 short, diverse, search-friendly English queries (≤15 words each).
    - Mix styles (keyword, semantic paraphrase, entity-focused, time-bounded) when applicable.
    - Do NOT invent facts not implied by the user input. Return 2–4 items only.
 4) output_format: ALWAYS return a 2-item array [type, language].
@@ -51,62 +67,59 @@ TASKS
    - If only one of (type, language) can be inferred, fill the other with its default.
    - Normalize to lowercase. Return exactly two items, no more, no less.
 
+{feedback_instructions}
+                                          
 STRICT OUTPUT (JSON ONLY, no prose):
 {schema}
 
 USER INPUT:
 {user_input}
 """).partial(schema=parser.get_format_instructions())
-
     llm = ChatOpenAI(
         model=config.LLM_MODEL_TEAM1,
         temperature=0.0,
         model_kwargs={"response_format": {"type": "json_object"}}
     )
-    chain = prompt | llm | parser
+    chain = prompt.partial(feedback_instructions=feedback_instructions, schema=parser.get_format_instructions()) | llm | parser
 
     try:
-        result = chain.invoke({"user_input": user_input})
-        # Basic validation on the result
-        if not result.get("rag_queries"):
-            raise ValueError("rag_queries cannot be empty.")
-        return result
+        result_dict = chain.invoke({"user_input": user_input})
+        if not result_dict.get("rag_queries"):
+            raise ValueError("rag_queries가 비어있습니다.")
+        return {
+            "messages": [
+                AIMessage(
+                    content="사용자 질문을 성공적으로 분석했습니다.",
+                    additional_kwargs=result_dict
+                )
+            ]
+        }
     except Exception as e:
         print(f"❌ Team 1 (질문 처리) 오류: {e}")
-        # Return a failure status directly
-        return {"status": {"team1": "fail"}, "error_message": f"Team1 Worker: 오류 발생 - {e}"}
-
+        return {"messages": [ToolMessage(content=f"fail: Team1 Worker 오류 - {e}", name="team1_worker", tool_call_id=str(uuid.uuid4()))]}
 
 # --- Node 2: 질문 평가 (Evaluator) ---
-
-class QuestionEvaluationResult(BaseModel):
-    """질문 평가 노드의 LLM 결과 스키마"""
-    semantic_alignment: float = Field(ge=0.0, le=1.0, description="사용자 입력과 q_en_transformed의 의미적 정합성 점수 [0,1]")
-    format_compliance: bool
-    rag_query_scores: List[float] = Field(default_factory=list)
-    error_message: str = ""
-
-def evaluate_question(state: GlobalState) -> Dict[str, Any]:
-    """
-    'process_question' 노드의 결과를 평가하고, 다음 단계로 진행할 최적의 RAG 쿼리를 선정합니다.
-    """
+def evaluate_question(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 1 (결과 평가) 실행 ---")
-    user_input = state.get("user_input", "")
-    q_validity = state.get("q_validity", False)
-    q_en_transformed = state.get("q_en_transformed", "")
-    rag_queries = state.get("rag_queries", [])
-    output_format = state.get("output_format", ["qa", "ko"])
+    last_message = state['messages'][-1]
+    if not isinstance(last_message, AIMessage) or not last_message.additional_kwargs:
+        return {"messages": [ToolMessage(content="fail: Team1 평가자가 분석 결과를 찾을 수 없습니다.", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
 
+    current_retries = state.get("team1_retries", 0)
+    state["team1_retries"] = current_retries + 1
+
+    processed_data = last_message.additional_kwargs
+    user_input = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
+
+    q_validity = processed_data.get("q_validity", False)
+    q_en_transformed = processed_data.get("q_en_transformed", "")
+    rag_queries = processed_data.get("rag_queries", [])
+    output_format = processed_data.get("output_format", ["qa", "ko"])
+    
     if not q_validity or not all([user_input, q_en_transformed, rag_queries]):
-         current_retries = state.get("team1_retries", 0)
-         return {
-             "status": {"team1": "fail"}, 
-             "error_message": "Team1 Evaluator: 평가에 필요한 정보 부족",
-             "team1_retries": current_retries + 1
-         }
+        return {"messages": [ToolMessage(content="fail: 평가에 필요한 정보 부족", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
     
     parser = JsonOutputParser(p_object=QuestionEvaluationResult)
-    
     prompt = PromptTemplate.from_template("""
 You are the Team1 Supervisor evaluator. Using the information below, make binary judgments and per-query scores.
 
@@ -140,8 +153,7 @@ Return JSON ONLY. Do not include any additional text.
 
 Output schema:
 {schema}
-""").partial(schema=parser.get_format_instructions())
-
+""").partial(schema=parser.get_format_instructions()) # 프롬프트 내용은 기존과 동일
     llm = ChatOpenAI(
         model=config.LLM_MODEL_TEAM1,
         temperature=0.0,
@@ -150,46 +162,49 @@ Output schema:
     chain = prompt | llm | parser
 
     try:
-        default_format = ["qa", "ko"]
         result_dict = chain.invoke({
             "user_input": user_input,
             "q_en_transformed": q_en_transformed,
             "output_format": json.dumps(output_format, ensure_ascii=False),
-            "default_format": json.dumps(default_format, ensure_ascii=False),
+            "default_format": json.dumps(["qa", "ko"], ensure_ascii=False),
             "rag_queries_json": json.dumps(rag_queries, ensure_ascii=False)
         })
         result = QuestionEvaluationResult.model_validate(result_dict)
 
-        # Python-side validation
         if len(result.rag_query_scores) != len(rag_queries):
-            raise ValueError("Score list length does not match query list length.")
-        if not (0.0 <= result.semantic_alignment <= 1.0):
-            raise ValueError("semantic_alignment must be within [0,1].")
-
+            raise ValueError("점수 리스트와 쿼리 리스트의 길이가 다릅니다.")
+        
         passed = (result.semantic_alignment >= 0.8) and result.format_compliance
         if passed:
-            # Find the best query using the scores
             best_idx = max(range(len(result.rag_query_scores)), key=lambda i: result.rag_query_scores[i])
+            best_query = rag_queries[best_idx]
+            
             return {
-                "status": {"team1": "pass"},
-                "rag_query": rag_queries[best_idx], # Set the best query
+                "messages": [
+                    ToolMessage(
+                        content="pass", 
+                        name="team1_evaluator",
+                        tool_call_id=str(uuid.uuid4()),
+                        additional_kwargs={
+                            "q_en_transformed": q_en_transformed,
+                            "output_format": output_format,
+                            "best_rag_query": best_query,
+                        }
+                    )
+                ]
             }
         else:
-            current_retries = state.get("team1_retries", 0)
-            # error_message가 비어 있고 불합격 사유가 점수 때문이라면 보조 메시지 제공
-            err = result.error_message or (
-                "Team1: 평가 기준 미달 (semantic_alignment < 0.8 또는 format_compliance=false)"
-            )
-            return {
-                "status": {"team1": "fail"},
-                "error_message": err,
-                "team1_retries": current_retries + 1
-            }
+            err = result.error_message or "Team1: 평가 기준 미달"
+            if current_retries < config.MAX_RETRIES_TEAM1:
+                print(f"🔁 Team 1 평가 실패. 재시도를 요청합니다. ({current_retries + 1}/{config.MAX_RETRIES_TEAM1})")
+                return {"messages": [ToolMessage(content="retry", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            else:
+                print(f"❌ Team 1 최종 실패 (재시도 {config.MAX_RETRIES_TEAM1}회 초과).")
+                return {"messages": [ToolMessage(content=f"fail: {err}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
+             
     except Exception as e:
-        current_retries = state.get("team1_retries", 0)
         print(f"❌ Team 1 (결과 평가) 오류: {e}")
-        return {
-            "status": {"team1": "fail"}, 
-            "error_message": f"Team1 Evaluator: 오류 발생 - {e}",
-            "team1_retries": current_retries + 1
-        }
+        if current_retries < config.MAX_RETRIES_TEAM1:
+             return {"messages": [ToolMessage(content="retry", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
+        else:
+             return {"messages": [ToolMessage(content=f"fail: Team1 Evaluator 오류 - {e}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}

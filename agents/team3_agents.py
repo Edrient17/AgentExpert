@@ -1,19 +1,17 @@
 # agents/team3_agents.py
-
 import json
+import uuid
 from typing import Dict, Any
 
-from langchain_core.exceptions import OutputParserException
-from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field, ValidationError
+from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.output_parsers import JsonOutputParser
+from pydantic import BaseModel, Field
 
 import config
-from state import GlobalState
+from state import AgentState
 from utility_tools import format_docs
-
-# --- Node 1: 답변 생성 (Worker) ---
 
 DOCS_ANSWER_PROMPT = PromptTemplate.from_template("""
 You are the Team 3 answer generator in a Multi-Agent Q&A pipeline.
@@ -37,6 +35,8 @@ If conflicts remain or the evidence is insufficient, I will output the no-inform
 I will NOT reveal any reasoning or the content of this <think> block in the final output.
 </think>
 
+{feedback_instructions}
+                                                  
 Requested format: {out_type}
 Requested language: {answer_language}
 
@@ -86,6 +86,8 @@ There are no external documents provided for this question.
 Your job:
 - Produce the final answer strictly in the requested output format and language.
 
+{feedback_instructions}
+
 Requested format: {out_type}
 Requested language: {answer_language}
 
@@ -121,22 +123,56 @@ Inputs:
 Answer:
 """)
 
-def generate_answer(state: GlobalState) -> Dict[str, Any]:
-    """
-    Team 1, 2에서 정제된 데이터를 바탕으로 최종 답변을 생성합니다.
-    """
-    print("--- AGENT: Team 3 (답변 생성) 실행 ---")
-    question = state.get("q_en_transformed", "")
-    output_format = state.get("output_format", ["qa", "ko"])
-    rag_docs = state.get("rag_docs", [])
-    web_docs = state.get("web_docs", [])
 
-    docs = web_docs if web_docs else rag_docs
+# --- Pydantic 스키마 ---
+class AnswerEvaluationResult(BaseModel):
+    rules_compliance: bool
+    question_coverage: float
+    logical_structure: float
+    error_message: str = ""
+
+def _get_context_from_history(state: AgentState) -> dict:
+    """메시지 히스토리에서 답변 생성에 필요한 모든 컨텍스트를 추출합니다."""
+    context = {
+        "q_en_transformed": "",
+        "output_format": ["qa", "ko"],
+        "docs": []
+    }
+    for msg in reversed(state['messages']):
+        if isinstance(msg, ToolMessage) and msg.name == "team2_evaluator" and msg.content == "pass":
+            context["docs"] = msg.additional_kwargs.get("retrieved_docs", [])
+        
+        if not context["q_en_transformed"] and isinstance(msg, ToolMessage) and msg.name == "team1_evaluator":
+            context["q_en_transformed"] = msg.additional_kwargs.get("q_en_transformed", "")
+            context["output_format"] = msg.additional_kwargs.get("output_format", ["qa", "ko"])
+    
+    return context
+
+# --- Node 1: 답변 생성 (Worker) ---
+def generate_answer(state: AgentState) -> Dict[str, Any]:
+    print("--- AGENT: Team 3 (답변 생성) 실행 ---")
+
+    manager_feedback = state.get("manager_feedback")
+    feedback_instructions = ""
+    if manager_feedback:
+        print(f"📝 매니저 피드백 수신 (Team 3): {manager_feedback}")
+        feedback_instructions = f"""
+**IMPORTANT REVISION INSTRUCTION FROM MANAGER:**
+Your previous answer was not satisfactory. You MUST revise your answer based on the following feedback:
+"{manager_feedback}"
+"""
+        state["manager_feedback"] = None
+
+    context = _get_context_from_history(state)
+    
+    question = context["q_en_transformed"]
+    output_format = context["output_format"]
+    docs = context["docs"]
     out_type, answer_language = output_format[0], output_format[1]
 
     if docs:
         print("... 문서를 기반으로 답변 생성")
-        prompt = DOCS_ANSWER_PROMPT
+        prompt = DOCS_ANSWER_PROMPT # DOCS_ANSWER_PROMPT 기존 내용
         invoke_params = {
             "q_en_transformed": question,
             "passages": format_docs(docs),
@@ -145,7 +181,7 @@ def generate_answer(state: GlobalState) -> Dict[str, Any]:
         }
     else:
         print("... LLM 자체 지식으로 답변 생성")
-        prompt = GENERAL_ANSWER_PROMPT
+        prompt = GENERAL_ANSWER_PROMPT # GENERAL_ANSWER_PROMPT 기존 내용
         invoke_params = {
             "q_en_transformed": question,
             "out_type": out_type,
@@ -153,43 +189,34 @@ def generate_answer(state: GlobalState) -> Dict[str, Any]:
         }
 
     llm = ChatOpenAI(model=config.LLM_MODEL_TEAM3, temperature=0.0)
-    chain = prompt | llm
+    chain = prompt.partial(feedback_instructions=feedback_instructions) | llm
 
     try:
         result = chain.invoke(invoke_params)
-        return {"generated_answer": result.content.strip()}
+        return {"messages": [AIMessage(content=result.content.strip())]}
     except Exception as e:
         print(f"❌ Team 3 (답변 생성) 오류: {e}")
-        return {"status": {"team3": "fail"}, "error_message": f"Team3 Worker: 오류 발생 - {e}"}
+        return {"messages": [ToolMessage(content=f"fail: Team3 Worker 오류 - {e}", name="team3_worker", tool_call_id=str(uuid.uuid4()))]}
 
 # --- Node 2: 답변 평가 (Evaluator) ---
-
-class AnswerEvaluationResult(BaseModel):
-    """답변 평가 노드의 LLM 결과 스키마"""
-    rules_compliance: bool
-    question_coverage: float
-    logical_structure: float
-    error_message: str = ""
-
-def evaluate_answer(state: GlobalState) -> Dict[str, Any]:
-    """
-    'generate_answer' 노드의 결과를 평가하여 최종적으로 사용자에게 전달될 품질인지 검수합니다.
-    """
+def evaluate_answer(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 3 (답변 평가) 실행 ---")
-    question = state.get("q_en_transformed", "")
-    output_format = state.get("output_format", ["qa", "ko"])
-    answer = state.get("generated_answer", "")
-
+    generated_answer_msg = state['messages'][-1]
+    if not isinstance(generated_answer_msg, AIMessage):
+        return {"messages": [ToolMessage(content="fail: 평가할 답변을 찾을 수 없습니다.", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
+    
+    current_retries = state.get("team3_retries", 0)
+    state["team3_retries"] = current_retries + 1
+    
+    answer = generated_answer_msg.content
+    context = _get_context_from_history(state)
+    question = context["q_en_transformed"]
+    output_format = context["output_format"]
+    
     if not all([question, output_format, answer]):
-        current_retries = state.get("team3_retries", 0)
-        return {
-            "status": {"team3": "fail"}, 
-            "error_message": "Team3 Evaluator: 평가에 필요한 정보 부족",
-            "team3_retries": current_retries + 1
-        }
+        return {"messages": [ToolMessage(content="fail: 평가에 필요한 정보 부족", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
     
     parser = JsonOutputParser(p_object=AnswerEvaluationResult)
-    
     prompt = PromptTemplate.from_template("""
 You are the Team 3 Supervisor evaluator. Judge the final answer against the requested format and the question.
 
@@ -213,7 +240,6 @@ Criteria:
 Return JSON ONLY with:
 {schema}
 """).partial(schema=parser.get_format_instructions())
-
     llm = ChatOpenAI(
         model=config.LLM_MODEL_TEAM3,
         temperature=0.0,
@@ -229,7 +255,6 @@ Return JSON ONLY with:
         })
         result = AnswerEvaluationResult.model_validate(result_dict)
 
-        # 세 가지 평가 기준을 모두 통과해야 최종 'pass'
         passed = (
             result.rules_compliance and
             result.question_coverage >= 0.7 and
@@ -237,29 +262,18 @@ Return JSON ONLY with:
         )
 
         if passed:
-            return {"status": {"team3": "pass"}}
+            return {"messages": [ToolMessage(content="pass", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
         else:
-            current_retries = state.get("team3_retries", 0)
-
-            reasons = []
-            if not result.rules_compliance:
-                reasons.append("format")
-            if result.question_coverage < 0.7:
-                reasons.append(f"coverage({result.question_coverage:.2f})")
-            if result.logical_structure < 0.7:
-                reasons.append(f"logic({result.logical_structure:.2f})")
-            
-            error_msg = result.error_message or f"Team3: 답변 품질 미달 ({', '.join(reasons)})"
-            return {
-                "status": {"team3": "fail"}, 
-                "error_message": error_msg,
-                "team3_retries": current_retries + 1
-            }
+            if current_retries < config.MAX_RETRIES_TEAM3:
+                print(f"🔁 Team 3 평가 실패. 재시도를 요청합니다. ({current_retries + 1}/{config.MAX_RETRIES_TEAM3})")
+                return {"messages": [ToolMessage(content="retry", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            else:
+                print(f"❌ Team 3 최종 실패 (재시도 {config.MAX_RETRIES_TEAM3}회 초과).")
+                return {"messages": [ToolMessage(content="fail: 답변 품질 미달", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
+           
     except Exception as e:
-        current_retries = state.get("team3_retries", 0)
         print(f"❌ Team 3 (답변 평가) 오류: {e}")
-        return {
-            "status": {"team3": "fail"}, 
-            "error_message": f"Team3 Evaluator: 오류 발생 - {e}",
-            "team3_retries": current_retries + 1
-        }
+        if current_retries < config.MAX_RETRIES_TEAM3:
+            return {"messages": [ToolMessage(content="retry", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
+        else:
+            return {"messages": [ToolMessage(content=f"fail: Team3 Evaluator 오류 - {e}", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}

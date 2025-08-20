@@ -1,15 +1,14 @@
-# app.py
-
 import streamlit as st
 import uuid
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # --- 프로젝트 파일 임포트 ---
-from state import GlobalState
+from state import AgentState # 변경된 State
 from graphs.team1_graph import create_team1_graph
 from graphs.team2_graph import create_team2_graph
 from graphs.team3_graph import create_team3_graph
 from graphs.super_graph import create_super_graph
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # --- 페이지 설정 ---
 st.set_page_config(
@@ -56,6 +55,64 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# --- Helper Function for Progress Tracking ---
+def parse_progress(messages: List[Dict[str, Any]]) -> str:
+    """메시지 목록을 분석하여 실시간 진행 상황 텍스트를 생성합니다."""
+    progress_text = "### 🏃‍♂️ 작업 진행 상황\n"
+    team1_status, team2_status, team3_status = "⏳ 진행 중...", "⏳ 대기 중...", "⏳ 대기 중..."
+    rag_query = ""
+    team1_failed = False
+
+    for msg in messages:
+        # Team 1 상태 분석
+        if msg.name == "team1_evaluator":
+            if msg.content == "pass":
+                team1_status = "✅ 완료"
+                rag_query = msg.additional_kwargs.get("best_rag_query", "")
+            else:
+                team1_status = f"❌ 실패 ({msg.content})"
+                team1_failed = True
+    
+    progress_text += f"**Team 1 (질문 분석)**: {team1_status}\n"
+    if rag_query:
+        progress_text += f"   - 최적 검색 쿼리: `{rag_query}`\n"
+
+    if team1_status == "✅ 완료":
+        team2_started = any(m.name in ["rag_search_result", "web_search_result"] for m in messages)
+        team2_evaluated = any(m.name == "team2_evaluator" for m in messages)
+
+        if not team2_started:
+             team2_status = "⏳ 진행 중..." # 라우터가 Team3로 바로 보낼 수도 있음
+        
+        if team2_evaluated:
+            team2_eval_msg = next((m for m in reversed(messages) if m.name == "team2_evaluator"), None)
+            if team2_eval_msg and team2_eval_msg.content == "pass":
+                team2_status = "✅ 완료"
+            else:
+                team2_status = f"❌ 실패 ({team2_eval_msg.content if team2_eval_msg else 'N/A'})"
+        
+        progress_text += f"**Team 2 (정보 수집)**: {team2_status}\n"
+
+        if team2_status == "✅ 완료":
+            team3_evaluated = any(m.name == "final_evaluator" for m in messages)
+            if not team3_evaluated:
+                team3_status = "⏳ 진행 중..."
+            else:
+                team3_eval_msg = next((m for m in reversed(messages) if m.name == "final_evaluator"), None)
+                if team3_eval_msg and team3_eval_msg.content == "pass":
+                    team3_status = "✅ 완료"
+                else:
+                    team3_status = f"❌ 실패 ({team3_eval_msg.content if team3_eval_msg else 'N/A'})"
+            
+            progress_text += f"**Team 3 (답변 생성)**: {team3_status}\n"
+
+    elif team1_failed:
+        progress_text += "**Team 2 (정보 수집)**: 🛑 중단\n"
+        progress_text += "**Team 3 (답변 생성)**: 🛑 중단\n"
+
+
+    return progress_text
+
 # --- 메인 로직: 사용자 입력 처리 및 그래프 실행 ---
 if prompt := st.chat_input("LangGraph의 주요 특징을 표로 정리해줘."):
     # 사용자 메시지를 채팅 기록에 추가하고 화면에 표시
@@ -73,10 +130,9 @@ if prompt := st.chat_input("LangGraph의 주요 특징을 표로 정리해줘.")
         answer_placeholder = st.empty()
 
         try:
-            # 그래프 실행을 위한 초기 상태 설정
-            initial_state: GlobalState = {
-                "user_input": prompt,
-                "status": {},
+            # 그래프 실행을 위한 초기 상태 설정 (메시지 기반)
+            initial_state: AgentState = {
+                "messages": [HumanMessage(content=prompt)],
                 "team1_retries": 0,
                 "team2_retries": 0,
                 "team3_retries": 0,
@@ -84,52 +140,29 @@ if prompt := st.chat_input("LangGraph의 주요 특징을 표로 정리해줘.")
             thread = {"configurable": {"thread_id": st.session_state.thread_id}}
 
             # LangGraph 스트림을 통해 실시간 이벤트 처리
-            final_state = None
+            final_state_messages = []
             for event in app.stream(initial_state, thread, stream_mode="values"):
-                final_state = event
+                # 이벤트에서 메시지 목록을 가져옴
+                messages = event.get("messages", [])
+                final_state_messages = messages
                 
-                # --- 실시간 진행 상황 업데이트 ---
-                progress_text = "### 🏃‍♂️ 작업 진행 상황\n"
-                status = event.get("status", {})
-                
-                # Team 1 상태
-                if "team1" in status:
-                    if status["team1"] == "pass":
-                        progress_text += "✅ **Team 1 (질문 분석)**: 완료\n"
-                        if event.get('rag_query'):
-                             progress_text += f"   - 최적 검색 쿼리: `{event['rag_query']}`\n"
-                    else:
-                        progress_text += "❌ **Team 1 (질문 분석)**: 실패\n"
-                else:
-                    progress_text += "⏳ **Team 1 (질문 분석)**: 진행 중...\n"
-
-                # 라우터 및 Team 2 상태
-                if status.get("team1") == "pass":
-                    if "team2" in status:
-                         if status["team2"] == "pass":
-                            progress_text += "✅ **Team 2 (정보 수집)**: 완료\n"
-                         else:
-                            progress_text += "❌ **Team 2 (정보 수집)**: 실패\n"
-                    # Team 2가 시작되기 전이거나, 건너뛴 경우
-                    elif "generated_answer" not in event:
-                         progress_text += "⏳ **Team 2 (정보 수집)**: 대기 중...\n"
-
-                # Team 3 상태
-                if status.get("team2") == "pass": # Team 2가 성공해야 Team 3 시작
-                    if "team3" in status:
-                        if status["team3"] == "pass":
-                            progress_text += "✅ **Team 3 (답변 생성)**: 완료\n"
-                        else:
-                            progress_text += "❌ **Team 3 (답변 생성)**: 실패\n"
-                    elif "generated_answer" not in event:
-                        progress_text += "⏳ **Team 3 (답변 생성)**: 대기 중...\n"
-
+                # 메시지 목록을 분석하여 진행 상황 업데이트
+                progress_text = parse_progress(messages)
                 progress_placeholder.markdown(progress_text)
                 
             # 최종 결과 처리
-            if final_state:
-                final_answer = final_state.get("generated_answer", "")
-                error_message = final_state.get("error_message", "")
+            if final_state_messages:
+                # 마지막 AIMessage를 최종 답변으로 간주
+                for msg in reversed(final_state_messages):
+                    if isinstance(msg, AIMessage):
+                        final_answer = msg.content
+                        break
+                
+                # 최종 답변을 찾지 못한 경우, 마지막 메시지에서 에러 확인
+                if not final_answer:
+                    last_msg = final_state_messages[-1]
+                    if last_msg.content != "pass":
+                        error_message = f"워크플로우가 실패로 종료되었습니다. (마지막 단계: {last_msg.name}, 이유: {last_msg.content})"
 
         except Exception as e:
             st.error(f"시스템 실행 중 예외가 발생했습니다: {e}")

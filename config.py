@@ -21,8 +21,12 @@ RERANKER_MODEL = "BAAI/bge-reranker-large"
 # --- Vector Store Path ---
 VECTOR_STORE_PATH = "vector_store/"
 
+# --- Control Flow ---
+MAX_RETRIES_TEAM1 = 2
+MAX_RETRIES_TEAM2 = 4
+MAX_RETRIES_TEAM3 = 2
+
 # --- API Keys ---
-# 필요한 API 키가 설정되었는지 확인
 if not os.getenv("OPENAI_API_KEY"):
     raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다.")
 if not os.getenv("SERPAPI_API_KEY"):

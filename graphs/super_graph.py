@@ -1,83 +1,134 @@
 # graphs/super_graph.py
 
-from langchain_core.output_parsers import StrOutputParser
+from typing import Literal, Optional
 from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import ToolMessage, HumanMessage
+from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 
 import config
-from state import GlobalState
+from state import AgentState
 
-def retrieval_necessity_router(state: GlobalState) -> str:
-    """
-    Team 1 완료 후, LLM을 이용해 Team 2(정보 검색)가 필요한지 판단하는 **라우팅 함수**입니다.
-    """
-    print("--- ROUTER: 정보 검색 필요 여부 판단 ---")
-    
-    if state.get("status", {}).get("team1") == "fail":
-        print("🚦 라우터: Team 1 실패 감지. 워크플로우를 종료합니다.")
-        return END
+# --- 매니저 에이전트의 결정을 위한 Pydantic 스키마 ---
+class ManagerDecision(BaseModel):
+    """매니저의 결정 스키마"""
+    next_team: Literal["team1", "team2", "team3", "end"] = Field(description="다음에 작업을 수행할 팀 또는 워크플로우 종료 여부")
+    feedback: Optional[str] = Field(description="작업을 수정해야 할 경우, 해당 팀에게 전달할 구체적인 한글 피드백")
+    reason: str = Field(description="결정에 대한 간단한 한글 요약")
 
-    question = state.get("q_en_transformed", "")
+# --- 슈퍼그래프의 노드들 ---
+
+def manager_agent(state: AgentState) -> dict:
+    """
+    각 팀의 작업 결과를 검토하고 다음 단계를 결정하는 매니저 에이전트입니다.
+    """
+    print("--- MANAGER: 작업 검토 및 다음 단계 결정 ---")
     
+    last_message = state['messages'][-1]
+    user_question = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
+
+    parser = JsonOutputParser(p_object=ManagerDecision)
     prompt = PromptTemplate.from_template("""
-You are a meticulous and safety-conscious router in a Q&A pipeline. Your critical task is to determine if a user's question can be answered *reliably* with your general knowledge, or if it requires consulting specific, external information to ensure accuracy and currency.
+You are the project manager of a multi-agent RAG system. Your role is to review the work of your teams (Team1, Team2, Team3) and decide the next step with surgical precision.
 
-Your response must be a single word: either 'retrieve' or 'skip'.
+**CONTEXT:**
+- User's original question: "{user_question}"
+- The last message from the previous team:
+  - Team/Node: "{last_message_name}"
+  - Content/Result: "{last_message_content}"
 
-Decision Criteria:
+**YOUR TASK:**
+Based on the context, decide the next team to call or to end the process. You can also provide feedback to a team to ask for revisions. The goal is to solve the problem by addressing the root cause.
 
-1.  retrieve: If the question requires external documents/knowledge (e.g., "Tell me about LangGraph"). 
-2.  skip:  If the question does NOT require external knowledge (e.g., "Hi? What's your name?", "What is 2+2?"). 
+**DECISION LOGIC (Follow these rules STRICTLY):**
+1.  **If `{last_message_name}` is "team1_evaluator":**
+    - If content is "pass": The query analysis is good. Call `team2` to start information retrieval.
+    - If content is "fail": The analysis is poor. Call `team1` again with specific feedback to improve the queries.
+2.  **If `{last_message_name}` is "team2_evaluator":**
+    - If content is "pass": The retrieved documents are relevant. Call `team3` to generate the final answer.
+    - If content is "fail": The documents are not good enough. This indicates the search queries were likely poor. **Call `team1` again.** Provide specific feedback, instructing them to generate better, more precise search queries based on the failure reason. For example: "The initial queries were too broad and did not yield relevant documents. Please generate more specific queries."
+3.  **If `{last_message_name}` is "final_evaluator" (from Team 3):**
+    - If content is "pass": The final answer is excellent. The job is done. Call `end`.
+    - If content is "fail": The answer is not satisfactory. Call `team3` again with feedback to revise the answer.
+4.  **If the last message indicates a critical tool failure:**
+    - The process cannot continue. Call `end` and provide a reason.
 
-When in doubt, always choose 'retrieve'.
+**OUTPUT (JSON ONLY):**
+Provide your decision in the following JSON format.
+{schema}
+""").partial(schema=parser.get_format_instructions())
 
-Question: "{question}"
-""").partial(question=question)
+    llm = ChatOpenAI(model=config.LLM_MODEL_SUPER_ROUTER, temperature=0.0, model_kwargs={"response_format": {"type": "json_object"}})
+    chain = prompt | llm | parser
 
-    llm = ChatOpenAI(model=config.LLM_MODEL_SUPER_ROUTER, temperature=0.0)
-    chain = prompt | llm | StrOutputParser()
-    
     try:
-        decision = chain.invoke({})
-        print(f"🧠 라우터 LLM 결정: '{decision}'")
-        if "retrieve" in decision.lower():
-            print("🚦 라우터: 정보 검색 필요. Team 2로 이동합니다.")
-            return "team2"
-        else:
-            print("🚦 라우터: 정보 검색 불필요. Team 2를 건너뛰고 Team 3로 이동합니다.")
-            state["status"]["team2"] = "pass"
-            return "team3"
+        result = chain.invoke({
+            "user_question": user_question,
+            "last_message_name": getattr(last_message, 'name', 'N/A'),
+            "last_message_content": last_message.content
+        })
+        
+        next_team = result.get("next_team", "end")
+        reason = result.get("reason", "LLM으로부터 이유를 받지 못했습니다.")
+        feedback = result.get("feedback")
+
+        print(f"🧠 매니저 결정: {next_team}, 이유: {reason}")
+        
+        update_dict = {
+            "next_team_to_call": next_team,
+            "manager_feedback": feedback
+        }
+
+        # 특정 팀으로 작업을 되돌려 보낼 때, 해당 팀의 재시도 횟수를 초기화
+        if next_team == "team1":
+            update_dict["team1_retries"] = 0
+        elif next_team == "team2":
+            update_dict["team2_retries"] = 0
+        elif next_team == "team3":
+            update_dict["team3_retries"] = 0
+        
+        return update_dict
+    
     except Exception as e:
-        print(f"❌ 라우터 LLM 실행 오류: {e}. 안전하게 Team 2로 보냅니다.")
-        return "team2"
+        print(f"❌ 매니저 에이전트 오류: {e}")
+        return {"next_team_to_call": "end", "manager_feedback": "매니저 에이전트 실행 중 오류가 발생했습니다."}
+
 
 def create_super_graph(team1_app, team2_app, team3_app):
     """
-    지능형 라우터를 포함하여 모든 팀 서브그래프를 통합합니다.
+    매니저 에이전트를 중심으로 모든 팀 서브그래프를 통합하는 슈퍼그래프를 생성합니다.
     """
-    builder = StateGraph(GlobalState)
+    builder = StateGraph(AgentState)
 
-    # 1. 각 팀 서브그래프를 노드로 추가합니다.
     builder.add_node("team1", team1_app)
     builder.add_node("team2", team2_app)
     builder.add_node("team3", team3_app)
+    builder.add_node("manager", manager_agent)
 
-    # 2. 엣지를 연결합니다.
     builder.set_entry_point("team1")
-    
+
+    builder.add_edge("team1", "manager")
+    builder.add_edge("team2", "manager")
+    builder.add_edge("team3", "manager")
+
+    def route_from_manager(state: AgentState) -> str:
+        next_team = state.get("next_team_to_call")
+        print(f"🚦 슈퍼그래프 라우터: 다음 목적지는 '{next_team}'")
+        if not next_team:
+            return "end" # next_team이 없는 예외적인 경우 종료
+        return next_team
+
     builder.add_conditional_edges(
-        "team1", # 시작 노드
-        retrieval_necessity_router, # 판단 함수
-        { # 판단 결과에 따른 분기
+        "manager",
+        route_from_manager,
+        {
+            "team1": "team1",
             "team2": "team2",
             "team3": "team3",
-            END: END
+            "end": END
         }
     )
-    
-    builder.add_edge("team2", "team3")
-    builder.add_edge("team3", END)
 
-    # 3. 최종 그래프를 컴파일합니다.
     return builder.compile()

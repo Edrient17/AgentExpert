@@ -1,34 +1,22 @@
 # state.py
 
-from typing import TypedDict, List, Dict, Any, Literal
-from langchain.schema import Document
+from typing import TypedDict, Annotated, List, Optional
+from langchain_core.messages import BaseMessage
+import operator
 
-class GlobalState(TypedDict):
+class AgentState(TypedDict):
     """
-    전체 워크플로우의 상태를 관리합니다.
+    전체 워크플로우의 상태를 메시지 목록으로 관리합니다.
     """
-    # 입력
-    user_input: str
+    messages: Annotated[List[BaseMessage], operator.add]
 
-    # Team 1 (질문 분석) 결과
-    q_validity: bool
-    q_en_transformed: str
-    rag_queries: List[str]
-    rag_query: str
-    output_format: List[str]
+    # --- 매니저-워커 제어 흐름 ---
+    # 매니저가 특정 팀에게 수정을 요청할 때 사용하는 피드백
+    manager_feedback: Optional[str]
+    # 매니저가 다음에 호출할 팀을 지정
+    next_team_to_call: str
 
-    # Team 2 (정보 수집) 결과
-    rag_docs: List[Document]
-    web_docs: List[Document]
-
-    # Team 3 (답변 생성) 결과
-    generated_answer: str
-
-    # 제어 흐름 및 에러 관리
-    status: Dict[str, Literal["pass", "fail", "pending"]]
-    error_message: str
-    
-    # 각 팀 서브그래프의 재시도 횟수를 추적
+    # 제어 흐름을 위한 최소한의 상태 (재시도 횟수)
     team1_retries: int
     team2_retries: int
     team3_retries: int
