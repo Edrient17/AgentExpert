@@ -6,9 +6,12 @@ import torch
 from typing import List
 
 from langchain_core.documents import Document
+from langchain_core.prompts import PromptTemplate
+from pydantic import BaseModel, Field
 from langchain_core.tools import tool
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 import config
@@ -62,34 +65,57 @@ def vector_store_rag_search(query: str, top_k: int = 10, rerank_k: int = 3) -> L
         return []
 
 # --- Tool 2: SerpAPI 웹 검색 ---
-@tool
-def serpapi_web_search(query: str, max_results: int = 5) -> List[Document]:
-    """
-    사용자의 질문(query)을 받아 SerpAPI를 통해 실시간 웹 검색을 수행하고,
-    검색 결과를 Document 객체 리스트로 반환합니다.
-    최신 정보나 외부 지식이 필요할 때 사용합니다.
-    """
-    print(f"🛠️ Web Search Tool 실행: '{query}'")
-    if not query: return []
-    api_key = os.getenv("SERPAPI_API_KEY")
-    if not api_key:
-        print("❌ SerpAPI 키가 설정되지 않았습니다."); return []
 
-    endpoint = "https://serpapi.com/search"
-    params = {"engine": "google", "q": query, "api_key": api_key}
+# --- Pydantic 스키마 (웹 검색 결과 구조화) ---
+class SearchResult(BaseModel):
+    """A single search result with its title, URL, and comprehensive summary."""
+    title: str = Field(description="The title of the search result.")
+    url: str = Field(description="The URL of the search result.")
+    summary: str = Field(description="A detailed and comprehensive summary of the search result's content, answering the user's query.")
+
+class SearchResults(BaseModel):
+    """A list of search results."""
+    results: List[SearchResult]
+
+@tool
+def deep_research_web_search(query: str, max_results: int = 3) -> List[Document]:
+    """
+    사용자의 질문(query)에 대해 gpt-4.1 모델을 사용하여 심층적인 웹 리서치를 수행하고,
+    그 결과를 구조화된 Document 객체 리스트로 반환합니다.
+    최신 정보나 외부의 깊이 있는 지식이 필요할 때 사용합니다.
+    """
+    print(f"🛠️ Deep Research Tool 실행: '{query}'")
+    if not query: return []
+
     try:
-        response = requests.get(endpoint, params=params); response.raise_for_status()
-        data, docs = response.json(), []
-        for result_type in ["answer_box", "knowledge_graph", "organic_results"]:
-            if result_type in data:
-                results = data[result_type]
-                if isinstance(results, dict) and result_type != "organic_results": results = [results]
-                for item in results:
-                    if len(docs) >= max_results: break
-                    content = item.get("snippet") or item.get("answer") or item.get("description")
-                    if content:
-                        docs.append(Document(page_content=content.strip(), metadata={"source": item.get("link", result_type), "title": item.get("title", "")}))
+        # LLM 및 프롬프트 설정
+        llm = ChatOpenAI(model="gpt-4.1", temperature=0)
+        structured_llm = llm.with_structured_output(SearchResults)
+        
+        prompt = PromptTemplate.from_template(
+            """You are an expert web researcher. Your task is to conduct a thorough and objective web search to answer the user's query.
+            
+            Please find {max_results} distinct, detailed, and non-overlapping results that directly address the following query: '{query}'
+            
+            For each result, provide a clear title, the source URL, and a comprehensive summary. Ensure the summary is detailed enough to be useful on its own."""
+        )
+
+        # 체인 실행
+        chain = prompt | structured_llm
+        response = chain.invoke({"query": query, "max_results": max_results})
+
+        # 결과를 Document 객체로 변환
+        docs = []
+        if response and response.results:
+            for result in response.results:
+                doc = Document(
+                    page_content=f"Title: {result.title}\nSummary: {result.summary}",
+                    metadata={"source": result.url, "title": result.title}
+                )
+                docs.append(doc)
+        
         return docs
+
     except Exception as e:
-        print(f"❌ Web Search Tool 실행 중 오류 발생: {e}")
+        print(f"❌ Deep Research Tool 실행 중 오류 발생: {e}")
         return []

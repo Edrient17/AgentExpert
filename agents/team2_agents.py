@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 import config
 from state import AgentState
-from utility_tools import vector_store_rag_search, serpapi_web_search, format_docs
+from utility_tools import vector_store_rag_search, deep_research_web_search, format_docs
 
 # --- Pydantic 스키마 ---
 class DocEvaluationResult(BaseModel):
@@ -55,7 +55,7 @@ def web_search(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 2 (웹 검색) 실행 ---")
     rag_query = _get_query_from_history(state)
     try:
-        web_docs = serpapi_web_search.func(rag_query)
+        web_docs = deep_research_web_search.func(rag_query)
         return {
             "messages": [
                 ToolMessage(
