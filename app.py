@@ -136,6 +136,7 @@ if prompt := st.chat_input("LangGraph의 주요 특징을 표로 정리해줘.")
                 "team1_retries": 0,
                 "team2_retries": 0,
                 "team3_retries": 0,
+                "global_loop_count": 0,
             }
             thread = {"configurable": {"thread_id": st.session_state.thread_id}}
 

@@ -26,8 +26,8 @@ MAX_RETRIES_TEAM1 = 2
 MAX_RETRIES_TEAM2 = 4
 MAX_RETRIES_TEAM3 = 2
 
+MAX_GLOBAL_LOOPS = 2
+
 # --- API Keys ---
 if not os.getenv("OPENAI_API_KEY"):
     raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다.")
-if not os.getenv("SERPAPI_API_KEY"):
-    print("SERPAPI_API_KEY가 설정되지 않았습니다.")

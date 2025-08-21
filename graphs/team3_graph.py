@@ -24,10 +24,10 @@ def create_team3_graph():
         """
         last_message = state['messages'][-1]
         
-        if last_message.content == "retry":
+        if last_message.content.startswith("retry"):
             print("🚦 라우터: Team 3 재시도 결정.")
             return "generate_answer"
-        else: # "pass" 또는 "fail"
+        else: # "pass" or "fail"
             print("🚦 라우터: Team 3 종료 결정.")
             return END
 

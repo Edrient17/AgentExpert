@@ -31,7 +31,10 @@ Passages:
 I will use both the information from these passages and my own prior knowledge to answer the question.
 First, I will carefully examine whether the passages contain any misinformation, contradictions, or irrelevant details.
 Then, I will combine verified facts from the passages with only safe, generally accepted prior knowledge to derive the correct answer.
-If conflicts remain or the evidence is insufficient, I will output the no-information message instead of guessing.
+
+Before finalizing the answer, I will double-check that every single statement in my generated answer is directly supported by the provided passages. If I cannot find direct evidence for a piece of information, I will remove it from the answer.
+
+If conflicts remain or the evidence is insufficient after this check, I will output the no-information message instead of guessing.
 I will NOT reveal any reasoning or the content of this <think> block in the final output.
 </think>
 
@@ -52,10 +55,6 @@ Format guidelines (flexible within type):
   • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.
   • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.
   • Use "N/A" for missing values.
-- json:
-  • Return valid JSON ONLY (no code fences).
-  • Always include an "answer" string. You may add keys like "evidence", "steps", "assumptions", "limitations", "confidence" (0–1), etc.
-  • Keep keys concise; use arrays/objects as needed.
 - report:
   • Design your own section plan (3–10 H2 sections) tailored to the question.
   • Each section 3–8 sentences; include lists/tables where helpful. Subsections (H3) allowed.
@@ -79,56 +78,12 @@ Inputs:
 Answer:
 """)
 
-GENERAL_ANSWER_PROMPT = PromptTemplate.from_template("""
-You are a helpful AI assistant. Your task is to answer the user's question using your own internal knowledge.
-There are no external documents provided for this question.
-
-Your job:
-- Produce the final answer strictly in the requested output format and language.
-
-{feedback_instructions}
-
-Requested format: {out_type}
-Requested language: {answer_language}
-
-Grounding & safety rules:
-- Do NOT add any prefixes about requested format prior to the answer.
-                                                                                                                                                         
-Format guidelines (flexible within type):
-- qa:
-  • Begin with a one-sentence direct answer.
-  • Then provide ample explanation (multiple short paragraphs and/or 3–8 bullets).
-  • If a procedure is involved, include a numbered step list. May add "Edge cases", "Tips" sections if useful.
-- bulleted:
-  • 8–15 bullets with meaningful substance (≤40 words each).
-  • You may group bullets by mini-headings (bold) and use one level of sub-bullets when needed.
-- table:
-  • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.
-  • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.
-  • Use "N/A" for missing values.
-- json:
-  • Return valid JSON ONLY (no code fences).
-  • Always include an "answer" string. You may add keys like "evidence", "steps", "assumptions", "limitations", "confidence" (0–1), etc.
-  • Keep keys concise; use arrays/objects as needed.
-- report:
-  • Design your own section plan (3–10 H2 sections) tailored to the question.
-  • Each section 3–8 sentences; include lists/tables where helpful. Subsections (H3) allowed.
-
-Write STRICTLY in: {answer_language}
-
-Inputs:
-[Refined question]
-{q_en_transformed}
-
-Answer:
-""")
-
-
 # --- Pydantic 스키마 ---
 class AnswerEvaluationResult(BaseModel):
     rules_compliance: bool
     question_coverage: float
     logical_structure: float
+    hallucination_score: float
     error_message: str = ""
 
 def _get_context_from_history(state: AgentState) -> dict:
@@ -153,6 +108,8 @@ def generate_answer(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 3 (답변 생성) 실행 ---")
 
     manager_feedback = state.get("manager_feedback")
+    last_message = state['messages'][-1]
+
     feedback_instructions = ""
     if manager_feedback:
         print(f"📝 매니저 피드백 수신 (Team 3): {manager_feedback}")
@@ -162,6 +119,16 @@ Your previous answer was not satisfactory. You MUST revise your answer based on 
 "{manager_feedback}"
 """
         state["manager_feedback"] = None
+
+    if isinstance(last_message, ToolMessage) and last_message.name == "final_evaluator" and last_message.content.startswith("retry"):
+        internal_feedback = last_message.content.replace("retry:", "").strip()
+        if internal_feedback:
+            print(f"📝 팀 내부 피드백 수신 (Team 3): {internal_feedback}")
+            feedback_instructions += f"""
+            **IMPORTANT INTERNAL FEEDBACK FOR REVISION:**
+            Your previous answer failed the internal quality check. You MUST revise your answer based on the following issue:
+            "{internal_feedback}"
+            """
 
     context = _get_context_from_history(state)
     
@@ -218,7 +185,8 @@ def evaluate_answer(state: AgentState) -> Dict[str, Any]:
     
     parser = JsonOutputParser(p_object=AnswerEvaluationResult)
     prompt = PromptTemplate.from_template("""
-You are the Team 3 Supervisor evaluator. Judge the final answer against the requested format and the question.
+You are the Team 3 Supervisor evaluator. Judge the final answer against the requested format,
+the refined question, AND the provided documents.
 
 Inputs:
 [Refined question]
@@ -230,13 +198,18 @@ Inputs:
 [Generated answer]
 {generated_answer}
 
+[Retrieved docs]
+{retrieved_docs}
+
 Criteria:
 1) rules_compliance (bool): Does the answer follow the requested output_format?
    - type ∈ ["qa","bulleted","table","json","report"]
    - language ∈ ["ko","en"]: The answer must be in the requested language.
 2) question_coverage (float): Score from 0.0 to 1.0. How well does the answer address the refined question (intent, scope, constraints)?
 3) logical_structure (float): Score from 0.0 to 1.0. How coherent and logically well-structured is the answer?
-
+4) hallucination_score (float): 0.0–1.0. To what extent is the answer grounded in the retrieved docs?
+   - 1.0 = entirely grounded, 0.0 = completely hallucinated.
+                                          
 Return JSON ONLY with:
 {schema}
 """).partial(schema=parser.get_format_instructions())
@@ -251,14 +224,16 @@ Return JSON ONLY with:
         result_dict = chain.invoke({
             "q_en_transformed": question,
             "output_format": json.dumps(output_format, ensure_ascii=False),
-            "generated_answer": answer
+            "generated_answer": answer,
+            "retrieved_docs": format_docs(context["docs"])
         })
         result = AnswerEvaluationResult.model_validate(result_dict)
 
         passed = (
             result.rules_compliance and
             result.question_coverage >= 0.7 and
-            result.logical_structure >= 0.7
+            result.logical_structure >= 0.7 and
+            result.hallucination_score >= 0.7
         )
 
         if passed:
@@ -266,7 +241,8 @@ Return JSON ONLY with:
         else:
             if current_retries < config.MAX_RETRIES_TEAM3:
                 print(f"🔁 Team 3 평가 실패. 재시도를 요청합니다. ({current_retries + 1}/{config.MAX_RETRIES_TEAM3})")
-                return {"messages": [ToolMessage(content="retry", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
+                err = result.error_message or "답변 품질 미달 (Answer quality is insufficient)"
+                return {"messages": [ToolMessage(content=f"retry: {err}", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
             else:
                 print(f"❌ Team 3 최종 실패 (재시도 {config.MAX_RETRIES_TEAM3}회 초과).")
                 return {"messages": [ToolMessage(content="fail: 답변 품질 미달", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}

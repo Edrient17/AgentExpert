@@ -19,7 +19,7 @@ def create_team1_graph():
     def route_after_evaluation(state: AgentState) -> str:
         last_message = state['messages'][-1]
         
-        if last_message.content == "retry":
+        if last_message.content.startswith("retry"):
             print("🚦 라우터: Team 1 재시도 결정.")
             return "process_question"
         else:

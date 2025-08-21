@@ -32,6 +32,7 @@ def process_question(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 1 (질문 처리) 실행 ---")
 
     manager_feedback = state.get("manager_feedback")
+    last_message = state['messages'][-1]
 
     feedback_instructions = ""
     if manager_feedback:
@@ -41,7 +42,18 @@ def process_question(state: AgentState) -> Dict[str, Any]:
         The previous attempt was not good enough. You MUST incorporate the following feedback into your new result:
         "{manager_feedback}"
         """
-        state["manager_feedback"] = None 
+        state["manager_feedback"] = None
+
+    # Check for internal team feedback from the evaluator
+    if isinstance(last_message, ToolMessage) and last_message.name == "team1_evaluator" and last_message.content.startswith("retry"):
+        internal_feedback = last_message.content.replace("retry:", "").strip()
+        if internal_feedback:
+            print(f"📝 팀 내부 피드백 수신: {internal_feedback}")
+            feedback_instructions += f"""
+            **IMPORTANT INTERNAL FEEDBACK FOR REVISION:**
+            Your previous attempt failed the internal quality check. You MUST address the following issue:
+            "{internal_feedback}"
+            """
         
     user_input = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
     if not user_input.strip():
@@ -55,11 +67,11 @@ TASKS
 1) q_validity: Decide if the user input is a valid, answerable question (True/False).
    - false if too vague / missing constraints / unsafe.
 2) q_en_transformed: Rewrite the question into clear English (preserve domain terms, numbers, units).
-3) rag_queries: Generate 2–4 short, diverse, search-friendly English queries (≤15 words each).
+3) rag_queries: Generate 2-4 detailed and specific search queries. Each query should capture the key entities, context, and user's intent from the input to retrieve comprehensive information.
    - Mix styles (keyword, semantic paraphrase, entity-focused, time-bounded) when applicable.
    - Do NOT invent facts not implied by the user input. Return 2–4 items only.
 4) output_format: ALWAYS return a 2-item array [type, language].
-   - type ∈ ["report","table","bulleted","json","qa"]
+   - type ∈ ["report","table","bulleted","qa"]
    - language ∈ ["ko","en"]
    - Defaults apply independently:
        • If type is missing/unclear/invalid → use "qa".
@@ -194,10 +206,10 @@ Output schema:
                 ]
             }
         else:
-            err = result.error_message or "Team1: 평가 기준 미달"
+            err = result.error_message or "Team1: 평가 기준 미달 (Team1: Evaluation criteria not met)"
             if current_retries < config.MAX_RETRIES_TEAM1:
                 print(f"🔁 Team 1 평가 실패. 재시도를 요청합니다. ({current_retries + 1}/{config.MAX_RETRIES_TEAM1})")
-                return {"messages": [ToolMessage(content="retry", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
+                return {"messages": [ToolMessage(content=f"retry: {err}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
             else:
                 print(f"❌ Team 1 최종 실패 (재시도 {config.MAX_RETRIES_TEAM1}회 초과).")
                 return {"messages": [ToolMessage(content=f"fail: {err}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}

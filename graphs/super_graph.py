@@ -25,6 +25,8 @@ def manager_agent(state: AgentState) -> dict:
     각 팀의 작업 결과를 검토하고 다음 단계를 결정하는 매니저 에이전트입니다.
     """
     print("--- MANAGER: 작업 검토 및 다음 단계 결정 ---")
+
+    global_loop_count = state.get("global_loop_count", 0)
     
     last_message = state['messages'][-1]
     user_question = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
@@ -73,6 +75,16 @@ Provide your decision in the following JSON format.
         next_team = result.get("next_team", "end")
         reason = result.get("reason", "LLM으로부터 이유를 받지 못했습니다.")
         feedback = result.get("feedback")
+
+        is_backward_loop = (getattr(last_message, 'name', 'N/A') == "team2_evaluator" and next_team == "team1")
+        
+        if is_backward_loop:
+            global_loop_count += 1
+            print(f"🔄 매니저가 백워드 루프를 감지했습니다. 글로벌 루프 카운트: {global_loop_count}")
+            if global_loop_count >= config.MAX_GLOBAL_LOOPS:
+                print(f"❌ 글로벌 루프 제한({config.MAX_GLOBAL_LOOPS}회)을 초과하여 프로세스를 종료합니다.")
+                next_team = "end" # Override the decision and force termination
+                feedback = "Process terminated to prevent an infinite loop."
 
         print(f"🧠 매니저 결정: {next_team}, 이유: {reason}")
         

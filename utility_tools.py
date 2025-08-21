@@ -64,7 +64,7 @@ def vector_store_rag_search(query: str, top_k: int = 10, rerank_k: int = 3) -> L
         print(f"❌ RAG Tool 실행 중 오류 발생: {e}")
         return []
 
-# --- Tool 2: SerpAPI 웹 검색 ---
+# --- Tool 2: OpenAI 웹 검색 ---
 
 # --- Pydantic 스키마 (웹 검색 결과 구조화) ---
 class SearchResult(BaseModel):

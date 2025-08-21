@@ -20,3 +20,5 @@ class AgentState(TypedDict):
     team1_retries: int
     team2_retries: int
     team3_retries: int
+
+    global_loop_count: int
