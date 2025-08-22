@@ -29,26 +29,6 @@ def manager_agent(state: AgentState) -> dict:
 
     last_name = getattr(last_message, 'name', 'N/A')
     last_content = getattr(last_message, 'content', '')
-    if last_name == "team2_evaluator" and last_content == "fail":
-        print("⚠️ 매니저: Team2 실패 감지 → Team1로 되돌림(결정적 가드).")
-        global_loop_count += 1
-        next_team = "team1"
-        feedback = "Team2가 자료 수집에 실패했습니다. 더 구체적이고 협의된 검색 쿼리를 생성하세요."
-        # 글로벌 루프 제한 체크
-        if global_loop_count >= config.MAX_GLOBAL_LOOPS:
-            print(f"❌ 글로벌 루프 제한({config.MAX_GLOBAL_LOOPS}회) 초과. 종료합니다.")
-            return {
-                "next_team_to_call": "end",
-                "manager_feedback": "Process terminated to prevent an infinite loop.",
-                "global_loop_count": global_loop_count,
-            }
-        # Team1 재시작 시 재시도 카운터 리셋
-        return {
-            "next_team_to_call": next_team,
-            "manager_feedback": feedback,
-            "global_loop_count": global_loop_count,
-            "team1_retries": 0,
-        }
 
     user_question = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
 
@@ -89,8 +69,8 @@ Provide your decision in the following JSON format.
     try:
         result = chain.invoke({
             "user_question": user_question,
-            "last_message_name": getattr(last_message, 'name', 'N/A'),
-            "last_message_content": last_message.content
+            "last_message_name": last_name,
+            "last_message_content": last_content
         })
         
         next_team = result.get("next_team", "end")

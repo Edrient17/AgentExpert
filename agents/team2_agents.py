@@ -14,7 +14,11 @@ import config
 from state import AgentState
 from utility_tools import vector_store_rag_search, deep_research_web_search, format_docs
 
-THRESHOLD = 0.7  # 통과 임계치(기존 기준)
+semantic_relevance_THRESHOLD = 0.7
+is_detailed_THRESHOLD = 0.8
+rag_search_num = 7
+web_search_num = 5
+total_docs_required = 5
 
 # --- 단일 문서 평가 스키마 ---
 class DocEvaluationResult(BaseModel):
@@ -23,28 +27,24 @@ class DocEvaluationResult(BaseModel):
     error_message: str = ""
 
 def _get_query_from_history(state: AgentState) -> str:
-    # 1) 상태 우선
     brq = state.get("best_rag_query")
     if brq:
         return brq
-    # 2) 하위호환: 메시지 백업
     for msg in reversed(state['messages']):
         if isinstance(msg, ToolMessage) and msg.name == "team1_evaluator":
             return msg.additional_kwargs.get("best_rag_query", "")
     return ""
 
 def _get_refined_question_from_history(state: AgentState) -> str:
-    # 1) 상태 우선
     q = state.get("q_en_transformed")
     if q:
         return q
-    # 2) 하위호환: 메시지 백업
     for msg in reversed(state['messages']):
         if isinstance(msg, ToolMessage) and msg.name == "team1_evaluator":
             return msg.additional_kwargs.get("q_en_transformed", "")
     return ""
 
-# --- Node 1: RAG 검색(10건 확보) ---
+# --- Node 1: RAG 검색 ---
 def rag_search(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 2 (RAG 검색) 실행 ---")
     rag_query = _get_query_from_history(state)
@@ -52,7 +52,7 @@ def rag_search(state: AgentState) -> Dict[str, Any]:
         return {"messages": [ToolMessage(content="fail: RAG 쿼리를 찾을 수 없습니다.", name="rag_search", tool_call_id=str(uuid.uuid4()))]}
 
     try:
-        rag_docs = vector_store_rag_search.func(rag_query, top_k=5, rerank_k=5)  # 5건 평가를 위해 조정
+        rag_docs = vector_store_rag_search.func(rag_query, top_k=rag_search_num, rerank_k=rag_search_num)
         return {
             "messages": [
                 ToolMessage(
@@ -62,7 +62,7 @@ def rag_search(state: AgentState) -> Dict[str, Any]:
                     additional_kwargs={"source_docs": rag_docs}
                 )
             ],
-            # Team2 사이클 시작: 누적 버킷 초기화
+
             "rag_docs": [],
             "web_docs": [],
         }
@@ -70,12 +70,12 @@ def rag_search(state: AgentState) -> Dict[str, Any]:
         print(f"❌ Team 2 (RAG 검색) 도구 실행 오류: {e}")
         return {"messages": [ToolMessage(content=f"fail: RAG 검색 오류 - {e}", name="rag_search", tool_call_id=str(uuid.uuid4()))]}
 
-# --- Node 2: 웹 검색(3건 단위) ---
+# --- Node 2: 웹 검색 ---
 def web_search(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 2 (웹 검색) 실행 ---")
     rag_query = _get_query_from_history(state)
     try:
-        web_docs = deep_research_web_search.func(rag_query, max_results=3)
+        web_docs = deep_research_web_search.func(rag_query, max_results=web_search_num)
         return {
             "messages": [
                 ToolMessage(
@@ -98,17 +98,14 @@ def evaluate_documents(state: AgentState) -> Dict[str, Any]:
     docs_to_evaluate = last_message.additional_kwargs.get("source_docs", [])
     source = "web" if last_message.name == "web_search_result" else "rag"
 
-    # 누적 버킷 로드
     rag_acc = list(state.get("rag_docs", []))
     web_acc = list(state.get("web_docs", []))
 
     current_retries = state.get("team2_retries", 0)
 
-    # 문서가 하나도 없으면: 소스별 기본 분기 + 재시도 예산 체크
     if not docs_to_evaluate:
         decision = "fallback_to_web" if source == "rag" else "retry_web"
         next_retries = current_retries + 1
-        # 재시도 예산 초과 → fail
         if next_retries >= config.MAX_RETRIES_TEAM2:
             decision = "fail"
         return {
@@ -130,17 +127,15 @@ def evaluate_documents(state: AgentState) -> Dict[str, Any]:
             ],
             "rag_docs": rag_acc,
             "web_docs": web_acc,
-            # ✅ pass가 아니므로 누적
             "team2_retries": next_retries,
         }
 
     q_en_transformed = _get_refined_question_from_history(state)
     rag_query = _get_query_from_history(state)
 
-    # 단일 문서 평가 체인
     parser = JsonOutputParser(p_object=DocEvaluationResult)
     single_doc_prompt = PromptTemplate.from_template("""
-You are the Team2 Supervisor evaluator. Given the question summary and retrieved document,
+You are the strict Quality Control Supervisor evaluator. Given the question summary and document,
 decide whether the document is good enough to support answering the question.
 
 [Question Summary]
@@ -154,7 +149,7 @@ decide whether the document is good enough to support answering the question.
 
 Return JSON ONLY with the following fields:
 - semantic_relevance (float in [0,1]): Do the docs match the user's intent and constraints?
-- is_detailed (float in [0,1]): Do the docs collectively contain enough specifics to answer the question reliably?
+- is_detailed (float in [0,1]): Do the docs provide enough specific details to comprehensively and reliably answer all parts of the question?
 - error_message (str): If anything is wrong (empty/irrelevant/too generic/duplicated), write a short Korean message; else "".
 
 Output schema:
@@ -175,7 +170,7 @@ Output schema:
             preview = (getattr(doc, "page_content", "") or "")[:4000]
             result_dict = chain.invoke({"q_en_transformed": q_en_transformed, "rag_query": rag_query, "doc_text": preview})
             r = DocEvaluationResult.model_validate(result_dict)
-            is_pass = (r.semantic_relevance >= THRESHOLD) and (r.is_detailed >= THRESHOLD)
+            is_pass = (r.semantic_relevance >= semantic_relevance_THRESHOLD) and (r.is_detailed >= is_detailed_THRESHOLD)
             if is_pass:
                 accepted.append(doc)
             else:
@@ -183,7 +178,6 @@ Output schema:
         except Exception as e:
             rejected.append({"reason": f"LLM 오류: {e}", "snippet": (getattr(doc, "page_content", "") or "")[:300]})
 
-    # 소스별 누적
     if accepted:
         if source == "rag":
             rag_acc += accepted
@@ -191,10 +185,9 @@ Output schema:
             web_acc += accepted
 
     total = len(rag_acc) + len(web_acc)
-    print(f"📊 평가 결과: RAG 누적 {len(rag_acc)} / WEB 누적 {len(web_acc)} (합계 {total}, 목표 ≥ 3)")
+    print(f"📊 평가 결과: RAG 누적 {len(rag_acc)} / WEB 누적 {len(web_acc)} (합계 {total}, 목표 ≥ {total_docs_required})")
 
-    if total >= 3:
-        # ✅ 통과: Team3로 진행 + 재시도 카운터 리셋
+    if total >= total_docs_required:
         combined = rag_acc + web_acc
         return {
             "messages": [
@@ -217,7 +210,6 @@ Output schema:
             "team2_retries": 0,  # ✅ 리셋
         }
     else:
-        # 부족: 소스별 분기 + 재시도 예산 체크
         decision = "fallback_to_web" if source == "rag" else "retry_web"
         next_retries = current_retries + 1
         if next_retries >= config.MAX_RETRIES_TEAM2:
@@ -241,5 +233,5 @@ Output schema:
             ],
             "rag_docs": rag_acc,
             "web_docs": web_acc,
-            "team2_retries": next_retries,  # ✅ 누적
+            "team2_retries": next_retries,
         }

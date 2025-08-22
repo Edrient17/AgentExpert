@@ -127,12 +127,12 @@ def vector_store_rag_search(
         fetch_k = int(top_k or max(out_k * 2, cfg_topk * 2))
 
         retriever = vs.as_retriever(search_kwargs={"k": fetch_k})
-        candidates: List[Document] = retriever.get_relevant_documents(query)
+        candidates: List[Document] = retriever.invoke(query)
 
         if getattr(config, "DUAL_QUERY_RETRIEVAL", False) and dual_queries:
             for q in dual_queries:
                 if q and q != query:
-                    candidates += retriever.get_relevant_documents(q)
+                    candidates += retriever.invoke(q)
 
         # 중복 제거 후 (옵션) 리랭킹
         uniq = _dedup(candidates)
@@ -172,9 +172,12 @@ def deep_research_web_search(query: str, max_results: int = 3) -> List[Document]
         structured_llm = llm.with_structured_output(SearchResults)
 
         prompt = PromptTemplate.from_template(
-            """You are an expert web researcher. Produce {max_results} distinct results that directly address the user's query: '{query}'.
-Each item must include: (1) clear title, (2) the source URL, and (3) a thorough, objective summary."""
-        )
+    """You are an expert web researcher at Samsung. Your task is to conduct a thorough and objective web search to answer the user's query.
+    
+    Please find {max_results} distinct, detailed, and non-overlapping results that directly address the following query: '{query}'
+
+    For each result, provide a (1) clear title and a (2) comprehensive summary. Ensure the summary is detailed enough to be useful on its own.
+    """)
 
         chain = prompt | structured_llm
         response: SearchResults = chain.invoke({"query": query, "max_results": max_results})
