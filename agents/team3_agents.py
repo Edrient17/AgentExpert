@@ -200,7 +200,7 @@ Your previous answer was not satisfactory. You MUST revise your answer based on 
 """
         state["manager_feedback"] = None
 
-    if isinstance(last_message, ToolMessage) and last_message.name == "final_evaluator" and last_message.content.startswith("retry"):
+    if isinstance(last_message, ToolMessage) and last_message.name == "team3_evaluator" and last_message.content.startswith("retry"):
         internal_feedback = last_message.content.replace("retry:", "").strip()
         if internal_feedback:
             print(f"📝 팀 내부 피드백 수신 (Team 3): {internal_feedback}")
@@ -325,19 +325,19 @@ Return JSON ONLY with:
         )
 
         if passed:
-            return {"messages": [ToolMessage(content="pass", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            return {"messages": [ToolMessage(content="pass", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
         else:
             if current_retries < config.MAX_RETRIES_TEAM3:
                 print(f"🔁 Team 3 평가 실패. 재시도를 요청합니다. ({current_retries + 1}/{config.MAX_RETRIES_TEAM3})")
                 err = result.error_message or "답변 품질 미달 (Answer quality is insufficient)"
-                return {"messages": [ToolMessage(content=f"retry: {err}", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
+                return {"messages": [ToolMessage(content=f"retry: {err}", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
             else:
                 print(f"❌ Team 3 최종 실패 (재시도 {config.MAX_RETRIES_TEAM3}회 초과).")
-                return {"messages": [ToolMessage(content="fail: 답변 품질 미달", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
-           
+                return {"messages": [ToolMessage(content="fail: 답변 품질 미달", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
+
     except Exception as e:
         print(f"❌ Team 3 (답변 평가) 오류: {e}")
         if current_retries < config.MAX_RETRIES_TEAM3:
-            return {"messages": [ToolMessage(content="retry", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            return {"messages": [ToolMessage(content="retry", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
         else:
-            return {"messages": [ToolMessage(content=f"fail: Team3 Evaluator 오류 - {e}", name="final_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            return {"messages": [ToolMessage(content=f"fail: Team3 Evaluator 오류 - {e}", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
