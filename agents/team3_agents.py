@@ -78,6 +78,49 @@ Inputs:
 Answer:
 """)
 
+GENERAL_ANSWER_PROMPT = PromptTemplate.from_template("""
+You are a helpful AI assistant. Your task is to answer the user's question using your own internal knowledge.
+There are no external documents provided for this question.
+
+Your job:
+- Produce the final answer strictly in the requested output format and language.
+
+{feedback_instructions}
+
+Requested format: {out_type}
+Requested language: {answer_language}
+
+Grounding & safety rules:
+- Do NOT add any prefixes about requested format prior to the answer.
+                                                                                                                                                         
+Format guidelines (flexible within type):
+- qa:
+  • Begin with a one-sentence direct answer.
+  • Then provide ample explanation (multiple short paragraphs and/or 3–8 bullets).
+  • If a procedure is involved, include a numbered step list. May add "Edge cases", "Tips" sections if useful.
+- bulleted:
+  • 8–15 bullets with meaningful substance (≤40 words each).
+  • You may group bullets by mini-headings (bold) and use one level of sub-bullets when needed.
+- table:
+  • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.
+  • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.
+  • Use "N/A" for missing values.
+- json:
+  • Return valid JSON ONLY (no code fences).
+  • Always include an "answer" string. You may add keys like "evidence", "steps", "assumptions", "limitations", "confidence" (0–1), etc.
+  • Keep keys concise; use arrays/objects as needed.
+- report:
+  • Design your own section plan (3–10 H2 sections) tailored to the question.
+  • Each section 3–8 sentences; include lists/tables where helpful. Subsections (H3) allowed.
+
+Write STRICTLY in: {answer_language}
+
+Inputs:
+[Refined question]
+{q_en_transformed}
+
+Answer:
+""")
 # --- Pydantic 스키마 ---
 class AnswerEvaluationResult(BaseModel):
     rules_compliance: bool
@@ -87,20 +130,45 @@ class AnswerEvaluationResult(BaseModel):
     error_message: str = ""
 
 def _get_context_from_history(state: AgentState) -> dict:
-    """메시지 히스토리에서 답변 생성에 필요한 모든 컨텍스트를 추출합니다."""
+    """답변 생성에 필요한 컨텍스트를 수집합니다. (rag 우선)"""
     context = {
         "q_en_transformed": "",
         "output_format": ["qa", "ko"],
+        "rag_docs": [],
+        "web_docs": [],
         "docs": []
     }
+
+    # 1) 상태에 있으면 우선 사용(rag 우선 결합)
+    rag_from_state = state.get("rag_docs", [])
+    web_from_state = state.get("web_docs", [])
+    if rag_from_state or web_from_state:
+        context["rag_docs"] = rag_from_state
+        context["web_docs"] = web_from_state
+        context["docs"] = rag_from_state + web_from_state  # rag 먼저
+
+    # 2) 메시지에서 Team2 pass의 추가정보를 조회 (백업 경로)
+    if not context["docs"]:
+        for msg in reversed(state['messages']):
+            if isinstance(msg, ToolMessage) and msg.name == "team2_evaluator" and msg.content == "pass":
+                rag_docs = msg.additional_kwargs.get("rag_docs", [])
+                web_docs = msg.additional_kwargs.get("web_docs", [])
+                if rag_docs or web_docs:
+                    context["rag_docs"] = rag_docs
+                    context["web_docs"] = web_docs
+                    context["docs"] = rag_docs + web_docs
+                else:
+                    # 구버전 호환: 합본만 온 경우
+                    context["docs"] = msg.additional_kwargs.get("retrieved_docs", [])
+                break
+
+    # 3) Team1의 질문/포맷 정보
     for msg in reversed(state['messages']):
-        if isinstance(msg, ToolMessage) and msg.name == "team2_evaluator" and msg.content == "pass":
-            context["docs"] = msg.additional_kwargs.get("retrieved_docs", [])
-        
-        if not context["q_en_transformed"] and isinstance(msg, ToolMessage) and msg.name == "team1_evaluator":
+        if isinstance(msg, ToolMessage) and msg.name == "team1_evaluator":
             context["q_en_transformed"] = msg.additional_kwargs.get("q_en_transformed", "")
             context["output_format"] = msg.additional_kwargs.get("output_format", ["qa", "ko"])
-    
+            break
+
     return context
 
 # --- Node 1: 답변 생성 (Worker) ---
