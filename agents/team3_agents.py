@@ -17,16 +17,26 @@ DOCS_ANSWER_PROMPT = PromptTemplate.from_template("""
 You are the Team 3 answer generator in a Multi-Agent Q&A pipeline.
 Your primary task is to synthesize an answer based on the provided passages.
 
-You will receive:
-- A refined English question
-- Retrieved passages as a concatenated preview (may be truncated)
+You will receive a user query and the following passages.
+                                                  
+Passage Sources
+1) RAG (Primary): The following is an internal/trust document.
+2) Web (Secondary): Below is an external web search summary.
+
+Decision rules:
+- If there is a conflict between the RAG and the Web content, the RAG takes precedence.
+- If the RAG is enough, the Web document will not be cited.                                               
 
 Your job:
 - Produce the final answer strictly in the requested output format and language.
 
 <think>
 Passages:
-{passages}
+[RAG Passages]
+{rag_context}
+
+[Web Passages]
+{web_context}
 
 I will use both the information from these passages and my own prior knowledge to answer the question.
 First, I will carefully examine whether the passages contain any misinformation, contradictions, or irrelevant details.
@@ -64,6 +74,7 @@ Grounding & safety rules:
 - If the passages are insufficient or conflicting, respond with the no-information message in the requested language and format:
   - ko: "문서에 해당 정보가 없습니다."
   - en: "The documents do not contain that information."
+- Neither RAG Passages nor WEB Passages always exists.
 - Do NOT add any prefixes about requested format prior to the answer.
 - Do NOT invent or hallucinate facts.
 - Do NOT include citations or URLs unless they explicitly appear in the passages.
@@ -72,9 +83,9 @@ Grounding & safety rules:
 Write STRICTLY in: {answer_language}
 
 Inputs:
-[Refined question]
+[user query]
 {q_en_transformed}
-
+                                      
 Answer:
 """)
 
@@ -207,13 +218,21 @@ Your previous answer was not satisfactory. You MUST revise your answer based on 
 
     if docs:
         print("... 문서를 기반으로 답변 생성")
-        prompt = DOCS_ANSWER_PROMPT # DOCS_ANSWER_PROMPT 기존 내용
+        prompt = DOCS_ANSWER_PROMPT  # DOCS_ANSWER_PROMPT 본문은 그대로 사용
+        # --- RAG/WEB 컨텍스트 분리 ---
+        rag_ctx = format_docs(context.get("rag_docs", []) or [])
+        web_ctx = format_docs(context.get("web_docs", []) or [])
+        # 템플릿이 요구하는 변수만 안전하게 주입
+        input_vars = set(getattr(prompt, "input_variables", []))
         invoke_params = {
             "q_en_transformed": question,
-            "passages": format_docs(docs),
             "out_type": out_type,
             "answer_language": answer_language,
         }
+        if "rag_context" in input_vars:
+            invoke_params["rag_context"] = rag_ctx
+        if "web_context" in input_vars:
+            invoke_params["web_context"] = web_ctx
     else:
         print("... LLM 자체 지식으로 답변 생성")
         prompt = GENERAL_ANSWER_PROMPT # GENERAL_ANSWER_PROMPT 기존 내용

@@ -1,85 +1,128 @@
 # ingest_data.py
+"""
+OpenAI text-embedding-3-large 기반 인덱싱 파이프라인
+- PDF: PyMuPDFLoader
+- 텍스트(.txt/.md): 직접 로드
+- 이미지(.png/.jpg/.jpeg): pytesseract OCR (kor+eng 기본)
+- 청크 분할 후 FAISS로 저장
+"""
 
 import os
-from PIL import Image
+from pathlib import Path
+from typing import List
+
 import pytesseract
+from PIL import Image
 
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain.schema import Document
+from langchain_core.documents import Document
+from langchain_openai import OpenAIEmbeddings
 
-# config 파일에서 모델 이름과 경로를 가져옵니다.
 import config
 
-# Tesseract 실행 파일 경로 설정 (Windows 사용자의 경우 필요할 수 있음)
-# 예: pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-def extract_text_from_image(image_path: str) -> Document:
-    """이미지 파일에서 텍스트를 추출하고 LangChain 문서로 반환합니다."""
+def _iter_files(root: str) -> List[Path]:
+    root_path = Path(root)
+    if not root_path.exists():
+        raise FileNotFoundError(f"소스 디렉토리가 존재하지 않습니다: {root}")
+    files: List[Path] = []
+    for p in root_path.rglob("*"):
+        if p.is_file():
+            files.append(p)
+    return files
+
+
+def _load_pdf(path: Path) -> List[Document]:
     try:
-        image = Image.open(image_path)
-        # 한국어와 영어를 모두 인식하도록 설정
-        text = pytesseract.image_to_string(image, lang='kor+eng')
-        return Document(page_content=text, metadata={"source": os.path.basename(image_path)})
+        loader = PyMuPDFLoader(str(path))
+        return loader.load()
     except Exception as e:
-        print(f"⚠️ 이미지 처리 오류 {image_path}: {e}")
-        return None
+        print(f"[warn] PDF 로드 실패: {path} -> {e}")
+        return []
 
-def create_vector_store(
-    data_path: str = "data/",
-    vector_store_path: str = config.VECTOR_STORE_PATH,
-    embedding_model: str = config.EMBEDDING_MODEL
-):
+
+def _load_text(path: Path) -> List[Document]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        return [Document(page_content=text, metadata={"source": str(path), "type": "text"})]
+    except Exception as e:
+        print(f"[warn] 텍스트 로드 실패: {path} -> {e}")
+        return []
+
+
+def _ocr_image(path: Path) -> List[Document]:
     """
-    지정된 경로의 문서(PDF, 이미지)를 로드하여 FAISS 벡터 저장소를 생성합니다.
+    Tesseract가 설치되어 있어야 합니다.
+    - 환경변수 TESSERACT_CMD 로 경로 지정 가능.
+    - 기본 언어: kor+eng (없으면 eng로 폴백)
     """
-    if not os.path.exists(data_path):
-        print(f"❌ 데이터 폴더 '{data_path}'를 찾을 수 없습니다. 폴더를 생성하고 파일을 넣어주세요.")
-        return
+    t_cmd = os.getenv("TESSERACT_CMD")
+    if t_cmd:
+        pytesseract.pytesseract.tesseract_cmd = t_cmd
 
-    all_docs = []
-    
-    # 1. PDF 및 이미지 파일 로드
-    print(f"📂 '{data_path}' 폴더에서 문서 로드를 시작합니다...")
-    for filename in os.listdir(data_path):
-        full_path = os.path.join(data_path, filename)
-        if filename.lower().endswith(".pdf"):
-            try:
-                loader = PyMuPDFLoader(full_path)
-                docs = loader.load()
-                all_docs.extend(docs)
-                print(f"  📄 PDF 로드 완료: {filename} ({len(docs)} 페이지)")
-            except Exception as e:
-                print(f"  ⚠️ PDF 로드 실패: {filename} ({e})")
-        elif filename.lower().endswith((".jpg", ".png", ".jpeg")):
-            doc = extract_text_from_image(full_path)
-            if doc:
-                all_docs.append(doc)
-                print(f"  🖼️ 이미지 처리 완료: {filename}")
+    lang = os.getenv("TESSERACT_LANG", "kor+eng")
+    try:
+        img = Image.open(str(path))
+        text = pytesseract.image_to_string(img, lang=lang)
+        text = text.strip()
+        if not text:
+            print(f"[warn] OCR 결과가 비었습니다: {path}")
+            return []
+        return [Document(page_content=text, metadata={"source": str(path), "type": "image-ocr"})]
+    except Exception as e:
+        print(f"[warn] OCR 실패: {path} -> {e}")
+        return []
 
-    if not all_docs:
-        print("🚫 처리할 문서가 없습니다. 'data' 폴더를 확인해주세요.")
-        return
 
-    # 2. 문서 분할
-    print(f"\n🌀 총 {len(all_docs)}개의 문서를 텍스트 청크로 분할합니다...")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    chunks = text_splitter.split_documents(all_docs)
-    print(f"  ✅ 총 {len(chunks)}개의 청크 생성 완료.")
+def load_documents(source_dir: str = "data") -> List[Document]:
+    docs: List[Document] = []
+    for fp in _iter_files(source_dir):
+        suffix = fp.suffix.lower()
+        if suffix == ".pdf":
+            docs.extend(_load_pdf(fp))
+        elif suffix in [".txt", ".md"]:
+            docs.extend(_load_text(fp))
+        elif suffix in [".png", ".jpg", ".jpeg"]:
+            docs.extend(_ocr_image(fp))
+        else:
+            # 기타 포맷은 건너뜀
+            pass
+    return docs
 
-    # 3. 임베딩 및 벡터 저장소 생성
-    print(f"\n🧠 임베딩 모델 '{embedding_model}'을 사용하여 벡터화를 시작합니다...")
-    embedding = HuggingFaceEmbeddings(model_name=embedding_model)
-    
-    db = FAISS.from_documents(chunks, embedding)
-    db.save_local(vector_store_path)
-    
-    print(f"\n✨ FAISS 벡터 저장소 생성이 완료되었습니다!")
-    print(f"  📍 저장 경로: '{vector_store_path}'")
+
+def create_vector_store(source_dir: str = "data") -> None:
+    """
+    OpenAI text-embedding-3-large로 문서 임베딩 후 FAISS에 저장합니다.
+    """
+    # 1) 문서 로드
+    raw_docs = load_documents(source_dir)
+    if not raw_docs:
+        raise RuntimeError("인덱싱할 문서를 찾지 못했습니다. source_dir을 확인하세요.")
+
+    # 2) 청크 분할
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=getattr(config, "CHUNK_SIZE", 1000),
+        chunk_overlap=getattr(config, "CHUNK_OVERLAP", 150),
+    )
+    chunks = splitter.split_documents(raw_docs)
+    print(f"[ok] 문서 {len(raw_docs)}개 → 청크 {len(chunks)}개")
+
+    # 3) 임베딩 (OpenAI)
+    embeddings = OpenAIEmbeddings(
+        model=getattr(config, "OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+        dimensions=getattr(config, "OPENAI_EMBEDDING_DIMENSIONS", None),
+        chunk_size=getattr(config, "EMBED_BATCH_SIZE", 128),
+    )
+
+    # 4) 벡터스토어 생성 및 저장
+    vs = FAISS.from_documents(chunks, embeddings)
+    save_path = getattr(config, "VECTOR_STORE_PATH", "vector_store/")
+    Path(save_path).mkdir(parents=True, exist_ok=True)
+    vs.save_local(save_path)
+    print(f"[ok] FAISS 벡터 저장소 저장 완료: {save_path}")
 
 
 if __name__ == "__main__":
-    # 이 스크립트를 직접 실행하면 벡터 저장소를 생성합니다.
     create_vector_store()

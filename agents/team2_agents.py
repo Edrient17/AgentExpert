@@ -23,12 +23,22 @@ class DocEvaluationResult(BaseModel):
     error_message: str = ""
 
 def _get_query_from_history(state: AgentState) -> str:
+    # 1) 상태 우선
+    brq = state.get("best_rag_query")
+    if brq:
+        return brq
+    # 2) 하위호환: 메시지 백업
     for msg in reversed(state['messages']):
         if isinstance(msg, ToolMessage) and msg.name == "team1_evaluator":
             return msg.additional_kwargs.get("best_rag_query", "")
     return ""
 
 def _get_refined_question_from_history(state: AgentState) -> str:
+    # 1) 상태 우선
+    q = state.get("q_en_transformed")
+    if q:
+        return q
+    # 2) 하위호환: 메시지 백업
     for msg in reversed(state['messages']):
         if isinstance(msg, ToolMessage) and msg.name == "team1_evaluator":
             return msg.additional_kwargs.get("q_en_transformed", "")

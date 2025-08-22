@@ -99,6 +99,8 @@ USER INPUT:
         if not result_dict.get("rag_queries"):
             raise ValueError("rag_queries가 비어있습니다.")
         return {
+            "user_input": user_input,
+            "q_en_transformed": result_dict.get("q_en_transformed", ""),
             "messages": [
                 AIMessage(
                     content="사용자 질문을 성공적으로 분석했습니다.",
@@ -192,9 +194,12 @@ Output schema:
             best_query = rag_queries[best_idx]
             
             return {
+                # ⬇️ 상태에 직접 저장
+                "best_rag_query": best_query,
+                "q_en_transformed": q_en_transformed,
                 "messages": [
                     ToolMessage(
-                        content="pass", 
+                        content="pass",
                         name="team1_evaluator",
                         tool_call_id=str(uuid.uuid4()),
                         additional_kwargs={

@@ -7,7 +7,6 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage, HumanMessage
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
 
 import config
 from state import AgentState
@@ -166,5 +165,4 @@ def create_super_graph(team1_app, team2_app, team3_app):
         }
     )
 
-    checkpointer = MemorySaver()
-    return builder.compile(checkpointer=checkpointer)
+    return builder.compile()
