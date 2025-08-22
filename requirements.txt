@@ -9,7 +9,7 @@ torch
 python-dotenv
 pillow
 pytesseract
-pymupdf
+pymupdf4llm
 langchain-community
 langchain-huggingface
 faiss-cpu

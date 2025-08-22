@@ -5,4 +5,6 @@
 (2) ingest_data.py를 실행한다. (데이터 벡터화)<br>
 (3) app.py를 실행한다. (streamlit 사이트 접속)<br>
 
+추가적으로, ingest_data.py를 사용하려면 tesseract를 별도로 설치해야 하는데, 하시려면 문의해주세요. <br>
+
 궁금한 점은 개인적으로 문의해주세요.
