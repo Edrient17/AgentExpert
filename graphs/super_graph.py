@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage, HumanMessage
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.memory import MemorySaver
 
 import config
 from state import AgentState
@@ -21,14 +22,35 @@ class ManagerDecision(BaseModel):
 # --- 슈퍼그래프의 노드들 ---
 
 def manager_agent(state: AgentState) -> dict:
-    """
-    각 팀의 작업 결과를 검토하고 다음 단계를 결정하는 매니저 에이전트입니다.
-    """
+
     print("--- MANAGER: 작업 검토 및 다음 단계 결정 ---")
 
     global_loop_count = state.get("global_loop_count", 0)
-    
     last_message = state['messages'][-1]
+
+    last_name = getattr(last_message, 'name', 'N/A')
+    last_content = getattr(last_message, 'content', '')
+    if last_name == "team2_evaluator" and last_content == "fail":
+        print("⚠️ 매니저: Team2 실패 감지 → Team1로 되돌림(결정적 가드).")
+        global_loop_count += 1
+        next_team = "team1"
+        feedback = "Team2가 자료 수집에 실패했습니다. 더 구체적이고 협의된 검색 쿼리를 생성하세요."
+        # 글로벌 루프 제한 체크
+        if global_loop_count >= config.MAX_GLOBAL_LOOPS:
+            print(f"❌ 글로벌 루프 제한({config.MAX_GLOBAL_LOOPS}회) 초과. 종료합니다.")
+            return {
+                "next_team_to_call": "end",
+                "manager_feedback": "Process terminated to prevent an infinite loop.",
+                "global_loop_count": global_loop_count,
+            }
+        # Team1 재시작 시 재시도 카운터 리셋
+        return {
+            "next_team_to_call": next_team,
+            "manager_feedback": feedback,
+            "global_loop_count": global_loop_count,
+            "team1_retries": 0,
+        }
+
     user_question = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
 
     parser = JsonOutputParser(p_object=ManagerDecision)
@@ -90,7 +112,8 @@ Provide your decision in the following JSON format.
         
         update_dict = {
             "next_team_to_call": next_team,
-            "manager_feedback": feedback
+            "manager_feedback": feedback,
+            "global_loop_count": global_loop_count,
         }
 
         # 특정 팀으로 작업을 되돌려 보낼 때, 해당 팀의 재시도 횟수를 초기화
@@ -143,4 +166,5 @@ def create_super_graph(team1_app, team2_app, team3_app):
         }
     )
 
-    return builder.compile()
+    checkpointer = MemorySaver()
+    return builder.compile(checkpointer=checkpointer)

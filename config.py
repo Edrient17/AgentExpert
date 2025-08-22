@@ -13,6 +13,7 @@ LLM_MODEL_TEAM1 = "gpt-4o-mini"
 LLM_MODEL_TEAM2_EVAL = "gpt-4o-mini"
 LLM_MODEL_TEAM3 = "gpt-4o"
 LLM_MODEL_SUPER_ROUTER = "gpt-4o-mini"
+LLM_MODEL_WEB = "gpt-4.1"
 
 # --- Embedding & Reranker Model Names ---
 EMBEDDING_MODEL = "jhgan/ko-sbert-nli"

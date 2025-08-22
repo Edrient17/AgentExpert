@@ -39,7 +39,7 @@ def format_docs(docs: List[Document], max_chars: int = 15000) -> str:
 
 # --- Tool 1: Vector Store RAG 검색 ---
 @tool
-def vector_store_rag_search(query: str, top_k: int = 10, rerank_k: int = 3) -> List[Document]:
+def vector_store_rag_search(query: str, top_k: int = 10, rerank_k: int = 5) -> List[Document]:
     """
     사용자의 질문(query)을 받아 로컬 Vector Store(FAISS)에서 관련 문서를 검색하고,
     정확도를 높이기 위해 리랭킹(reranking)을 수행한 후 상위 문서를 반환합니다.
@@ -89,7 +89,7 @@ def deep_research_web_search(query: str, max_results: int = 3) -> List[Document]
 
     try:
         # LLM 및 프롬프트 설정
-        llm = ChatOpenAI(model="gpt-4.1", temperature=0)
+        llm = ChatOpenAI(model=config.LLM_MODEL_WEB, temperature=0)
         structured_llm = llm.with_structured_output(SearchResults)
         
         prompt = PromptTemplate.from_template(
@@ -119,3 +119,4 @@ def deep_research_web_search(query: str, max_results: int = 3) -> List[Document]
     except Exception as e:
         print(f"❌ Deep Research Tool 실행 중 오류 발생: {e}")
         return []
+

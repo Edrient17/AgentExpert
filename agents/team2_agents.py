@@ -92,13 +92,36 @@ def evaluate_documents(state: AgentState) -> Dict[str, Any]:
     rag_acc = list(state.get("rag_docs", []))
     web_acc = list(state.get("web_docs", []))
 
-    # 평가할 대상이 없으면 소스별 기본 분기
+    current_retries = state.get("team2_retries", 0)
+
+    # 문서가 하나도 없으면: 소스별 기본 분기 + 재시도 예산 체크
     if not docs_to_evaluate:
         decision = "fallback_to_web" if source == "rag" else "retry_web"
+        next_retries = current_retries + 1
+        # 재시도 예산 초과 → fail
+        if next_retries >= config.MAX_RETRIES_TEAM2:
+            decision = "fail"
         return {
-            "messages": [ToolMessage(content=decision, name="team2_evaluator", tool_call_id=str(uuid.uuid4()))],
+            "messages": [
+                ToolMessage(
+                    content=decision,
+                    name="team2_evaluator",
+                    tool_call_id=str(uuid.uuid4()),
+                    additional_kwargs={
+                        "source": source,
+                        "accepted_rag": len(rag_acc),
+                        "accepted_web": len(web_acc),
+                        "current_total": len(rag_acc) + len(web_acc),
+                        "retries": next_retries,
+                        "max_retries": config.MAX_RETRIES_TEAM2,
+                        "failed_reason": "no_docs_to_evaluate" if decision == "fail" else ""
+                    }
+                )
+            ],
             "rag_docs": rag_acc,
             "web_docs": web_acc,
+            # ✅ pass가 아니므로 누적
+            "team2_retries": next_retries,
         }
 
     q_en_transformed = _get_refined_question_from_history(state)
@@ -161,8 +184,8 @@ Output schema:
     print(f"📊 평가 결과: RAG 누적 {len(rag_acc)} / WEB 누적 {len(web_acc)} (합계 {total}, 목표 ≥ 3)")
 
     if total >= 3:
-        # 통과: Team3로 진행
-        combined = rag_acc + web_acc  # rag 우선 순서 유지
+        # ✅ 통과: Team3로 진행 + 재시도 카운터 리셋
+        combined = rag_acc + web_acc
         return {
             "messages": [
                 ToolMessage(
@@ -173,7 +196,6 @@ Output schema:
                         "source": source,
                         "accepted_rag": len(rag_acc),
                         "accepted_web": len(web_acc),
-                        # Team3 호환성: 둘 다 전달 + 합본도 함께
                         "rag_docs": rag_acc,
                         "web_docs": web_acc,
                         "retrieved_docs": combined,
@@ -182,10 +204,14 @@ Output schema:
             ],
             "rag_docs": rag_acc,
             "web_docs": web_acc,
+            "team2_retries": 0,  # ✅ 리셋
         }
     else:
-        # 부족: RAG 이후면 웹으로, 웹 이후면 웹 재시도
+        # 부족: 소스별 분기 + 재시도 예산 체크
         decision = "fallback_to_web" if source == "rag" else "retry_web"
+        next_retries = current_retries + 1
+        if next_retries >= config.MAX_RETRIES_TEAM2:
+            decision = "fail"
         return {
             "messages": [
                 ToolMessage(
@@ -197,9 +223,13 @@ Output schema:
                         "accepted_rag": len(rag_acc),
                         "accepted_web": len(web_acc),
                         "current_total": total,
+                        "retries": next_retries,
+                        "max_retries": config.MAX_RETRIES_TEAM2,
+                        "failed_reason": "budget_exhausted" if decision == "fail" else ""
                     }
                 )
             ],
             "rag_docs": rag_acc,
             "web_docs": web_acc,
+            "team2_retries": next_retries,  # ✅ 누적
         }

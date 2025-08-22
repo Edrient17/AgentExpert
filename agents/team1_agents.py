@@ -55,7 +55,7 @@ def process_question(state: AgentState) -> Dict[str, Any]:
             "{internal_feedback}"
             """
         
-    user_input = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
+    user_input = next((msg.content for msg in reversed(state['messages']) if isinstance(msg, HumanMessage)), "")
     if not user_input.strip():
         return {"messages": [ToolMessage(content="fail: 입력된 질문이 없습니다.", name="team1_worker", tool_call_id=str(uuid.uuid4()))]}
 
