@@ -9,14 +9,14 @@ load_dotenv()
 # -----------------------------
 # LLM 모델 설정
 # -----------------------------
-LLM_MODEL_TEAM1: str = "gpt-4o-mini"
-LLM_MODEL_TEAM2_EVAL: str = "gpt-4o-mini"
+LLM_MODEL_TEAM1: str = "gpt-4o"
+LLM_MODEL_TEAM2_EVAL: str = "gpt-4o"
 LLM_MODEL_TEAM3: str = "gpt-4o"           # Team3 최종 생성용
-LLM_MODEL_SUPER_ROUTER: str = "gpt-4o-mini"
-LLM_MODEL_WEB: str = "gpt-4.1"            # (예시)
+LLM_MODEL_SUPER_ROUTER: str = "gpt-4o"
+LLM_MODEL_WEB: str = "gpt-4.1"
 
 # Team3 생성 파라미터
-TEAM3_TEMPERATURE: float = 0.2
+TEAM3_TEMPERATURE: float = 0
 
 # -----------------------------
 # 벡터 스토어 / 임베딩
@@ -37,7 +37,6 @@ CHUNK_OVERLAP: int = 150
 
 # 검색 파라미터
 TOP_K_PER_QUERY: int = 5
-DUAL_QUERY_RETRIEVAL: bool = True   # 한·영 병행 쿼리 사용 시 True (utility_tools에서 사용)
 
 # (선택) 리랭커 사용: utility_tools에서 참고
 USE_RERANKER: bool = False

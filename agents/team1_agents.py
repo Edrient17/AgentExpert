@@ -67,7 +67,7 @@ TASKS
 1) q_validity: Decide if the user input is a valid, answerable question (True/False).
    - false if too vague / missing constraints / unsafe.
 2) q_en_transformed: Rewrite the question into clear English (preserve domain terms, numbers, units).
-3) rag_queries: Generate 2-4 detailed and specific search queries. Each query should capture the key entities, context, and user's intent from the input to retrieve comprehensive information.
+3) rag_queries: Generate 2-4 concise and keyword-focused search queries. Each query should extract the essential nouns and core intent from the user's input.
    - Mix styles (keyword, semantic paraphrase, entity-focused, time-bounded) when applicable.
    - Do NOT invent facts not implied by the user input. Return 2–4 items only.
 4) output_format: ALWAYS return a 2-item array [type, language].

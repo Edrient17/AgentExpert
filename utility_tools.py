@@ -11,7 +11,6 @@ from langchain_community.vectorstores import FAISS
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel, Field
 
-# (선택) HF Cross-Encoder 기반 리랭커
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 import config
@@ -98,20 +97,17 @@ def _rerank(query: str, docs: List[Document], out_k: int) -> List[Document]:
 # Tool 1: Vector Store RAG 검색
 #  - OpenAI 임베딩(다국어) 사용
 #  - (옵션) dual_queries 병행 검색
-#  - (옵션) Cross-Encoder 리랭커
 # =========================================================
 
 @tool
 def vector_store_rag_search(
     query: str,
     top_k: int = None,
-    rerank_k: int = None,
-    dual_queries: Optional[List[str]] = None
+    rerank_k: int = None
 ) -> List[Document]:
     """
     로컬 FAISS 벡터스토어에서 유사 문서를 검색합니다.
     - query: 기본(주로 영어) 쿼리
-    - dual_queries: 보조(한글 등) 쿼리 리스트. config.DUAL_QUERY_RETRIEVAL=True일 때만 병행
     - top_k: 1차 후보 개수(미지정 시 config.TOP_K_PER_QUERY*2 정도로 내부 조정)
     - rerank_k: 최종 반환 개수(미지정 시 config.TOP_K_PER_QUERY)
     """
@@ -128,11 +124,6 @@ def vector_store_rag_search(
 
         retriever = vs.as_retriever(search_kwargs={"k": fetch_k})
         candidates: List[Document] = retriever.invoke(query)
-
-        if getattr(config, "DUAL_QUERY_RETRIEVAL", False) and dual_queries:
-            for q in dual_queries:
-                if q and q != query:
-                    candidates += retriever.invoke(q)
 
         # 중복 제거 후 (옵션) 리랭킹
         uniq = _dedup(candidates)

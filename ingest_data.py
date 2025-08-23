@@ -14,8 +14,8 @@ import io
 from pathlib import Path
 from typing import List, Optional
 
-import fitz               # PyMuPDF (이미지 추출/페이지 렌더)
-import pymupdf4llm        # PDF → Markdown
+import fitz
+import pymupdf4llm
 from PIL import Image
 import pytesseract
 

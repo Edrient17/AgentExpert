@@ -73,9 +73,9 @@ def rag_search(state: AgentState) -> Dict[str, Any]:
 # --- Node 2: 웹 검색 ---
 def web_search(state: AgentState) -> Dict[str, Any]:
     print("--- AGENT: Team 2 (웹 검색) 실행 ---")
-    rag_query = _get_query_from_history(state)
+    q_en_transformed = state.get("q_en_transformed", "")
     try:
-        web_docs = deep_research_web_search.func(rag_query, max_results=web_search_num)
+        web_docs = deep_research_web_search.func(q_en_transformed, max_results=web_search_num)
         return {
             "messages": [
                 ToolMessage(
