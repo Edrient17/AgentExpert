@@ -9,10 +9,10 @@ load_dotenv()
 # -----------------------------
 # LLM 모델 설정
 # -----------------------------
-LLM_MODEL_TEAM1: str = "gpt-4o"
-LLM_MODEL_TEAM2_EVAL: str = "gpt-4o"
-LLM_MODEL_TEAM3: str = "gpt-4o"           # Team3 최종 생성용
-LLM_MODEL_SUPER_ROUTER: str = "gpt-4o"
+LLM_MODEL_TEAM1: str = "gpt-4.1"
+LLM_MODEL_TEAM2_EVAL: str = "gpt-4.1"
+LLM_MODEL_TEAM3: str = "gpt-4.1" 
+LLM_MODEL_SUPER_ROUTER: str = "gpt-4.1"
 LLM_MODEL_WEB: str = "gpt-4.1"
 
 # Team3 생성 파라미터
@@ -41,6 +41,11 @@ TOP_K_PER_QUERY: int = 5
 # (선택) 리랭커 사용: utility_tools에서 참고
 USE_RERANKER: bool = False
 RERANKER_MODEL_NAME: str = "BAAI/bge-reranker-v2-m3"
+
+# 차트 산출물 저장 경로/옵션
+CHART_OUTPUT_DIR: str = "artifacts/charts"
+CHART_DPI: int = 150
+
 
 # -----------------------------
 # 제어 플로우(재시도/루프)

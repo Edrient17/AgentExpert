@@ -163,12 +163,32 @@ def deep_research_web_search(query: str, max_results: int = 3) -> List[Document]
         structured_llm = llm.with_structured_output(SearchResults)
 
         prompt = PromptTemplate.from_template(
-    """You are an expert web researcher at Samsung. Your task is to conduct a thorough and objective web search to answer the user's query.
-    
-    Please find {max_results} distinct, detailed, and non-overlapping results that directly address the following query: '{query}'
+"""You are an expert, objective web researcher working specifically on Samsung-related questions.
+Assume that most incoming queries are about Samsung products, services, specifications, policies, or company news.
 
-    For each result, provide a (1) clear title and a (2) comprehensive summary. Ensure the summary is detailed enough to be useful on its own.
-    """)
+Goal:
+Provide {max_results} distinct, non-overlapping results that directly address the user’s query,
+prioritizing Samsung-owned official sources while allowing reputable third-party sources only if official coverage is insufficient.
+
+Ranking & Source Policy:
+- Rank Samsung official domains first (samsung.com, semiconductor.samsung.com, news.samsung.com, images.samsung.com, developer.samsung.com, research.samsung.com).
+- If official coverage is insufficient, you MAY include reputable third-party sources (e.g., major tech media, standards bodies, vendor whitepapers),
+  but keep the summaries factual and clearly avoid speculation.
+
+Requirements:
+- Each result must include:
+  (1) a clear, concise title,
+  (2) a comprehensive, factual summary in Korean (useful on its own, no marketing fluff; if third-party, reflect that neutrally),
+  (3) the canonical, direct https URL.
+- Prefer diverse domains/perspectives; avoid near-duplicates.
+- Do NOT fabricate facts or URLs. If a crucial detail is unknown, explicitly state it in the summary.
+- Be precise and concrete: include key numbers, model names, SKUs, standards, or dates when available.
+
+Query: '{query}'
+
+Return ONLY a structured object that matches the given schema (no extra text).
+"""
+        )
 
         chain = prompt | structured_llm
         response: SearchResults = chain.invoke({"query": query, "max_results": max_results})

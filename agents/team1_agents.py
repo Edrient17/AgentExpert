@@ -66,7 +66,7 @@ You are the first-stage agent in a RAG pipeline.
 TASKS
 1) q_validity: Decide if the user input is a valid, answerable question (True/False).
    - false if too vague / missing constraints / unsafe.
-2) q_en_transformed: Rewrite the question into clear English (preserve domain terms, numbers, units).
+2) q_en_transformed: Rewrite the question into clear English (preserve domain terms, numbers, units). Do not include content about the output format.
 3) rag_queries: Generate 2-4 concise and keyword-focused search queries. Each query should extract the essential nouns and core intent from the user's input.
    - Mix styles (keyword, semantic paraphrase, entity-focused, time-bounded) when applicable.
    - Do NOT invent facts not implied by the user input. Return 2–4 items only.
@@ -152,17 +152,36 @@ You are the Team1 Supervisor evaluator. Using the information below, make binary
 [rag_queries]
 {rag_queries_json}
 
-Criteria:
-1) semantic_alignment (float in [0,1]): A continuous score for how accurately q_en_transformed reflects the meaning and constraints of user_input.
-   - 1.0 = perfectly faithful; 0.0 = unrelated/incorrect.
-2) format_compliance (bool): Follow these steps IN ORDER to decide:
-   a) First, analyze [User Input]. Does it explicitly request a specific output format or language (e.g., "표로", "영어로", "in a table", "in English")?
-   b) **If the user SPECIFIED a format:** `format_compliance` is TRUE if [output_format] correctly matches the user's request. **The [default_format] is IRRELEVANT and should be ignored in this case.**
-   c) **If the user did NOT specify a format:** `format_compliance` is TRUE only if [output_format] is exactly the same as [default_format].
-3) rag_query_scores (list[float]): For each rag_query, output a score in [0, 1] indicating how well it captures the user’s requirements
-   (entities/keywords, constraints, time ranges, numbers/units, search-friendliness). Length MUST equal len(rag_queries).
-4) error_message (str): If anything is wrong or inconsistent, write a short Korean message describing the issue; otherwise return an empty string "".
+[Scoring Guide]
 
+You must evaluate the document using the following criteria.
+You must select only one of the predefined values. Do not output any intermediate values.
+
+1) semantic_alignment (float in [0,1])  
+   - Definition: How accurately `q_en_transformed` reflects the meaning and constraints of `user_input`.  
+   - Allowed values: {{0.00, 0.25, 0.50, 0.75, 1.00}}  
+     * 0.00 (None): completely irrelevant or incorrect  
+     * 0.25 (Low): only some keywords overlap, misses the core meaning/constraints  
+     * 0.50 (Partial): captures main meaning but lacks important constraints or nuance  
+     * 0.75 (Strong): satisfies most meaning/constraints with solid coverage, but small gaps remain  
+     * 1.00 (Exact): fully faithful to meaning/constraints, immediately usable  
+
+2) format_compliance (bool)  
+   - Definition: Whether the `output_format` matches the user’s requested format.  
+   - Decision process:  
+     a) Analyze `user_input`. Did the user explicitly request a format/language (e.g., "표로", "영어로", "in a table", "in English")?  
+     b) If YES → `format_compliance = true` only if `output_format` exactly matches the user’s request (ignore default_format).  
+     c) If NO → `format_compliance = true` only if `output_format` == `default_format`.  
+
+3) rag_query_scores (list[float])  
+   - Definition: For each `rag_query`, score how well it captures the user’s requirements (keywords, constraints, time ranges, numbers/units, search-friendliness).  
+   - Each value must be in [0.00, 1.00], continuous scale.  
+   - The length MUST equal len(rag_queries).  
+
+4) error_message (str)  
+   - If the document is empty, irrelevant, too generic, or duplicated → return a short note in Korean.  
+   - Otherwise return "" (empty string).
+                                          
 Return JSON ONLY. Do not include any additional text.
 
 Output schema:

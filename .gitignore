@@ -7,3 +7,6 @@ __pycache__/
 
 # VSCode 설정
 .vscode/
+
+*.faiss
+*.pkl

@@ -137,7 +137,6 @@ Answer:
 class AnswerEvaluationResult(BaseModel):
     rules_compliance: bool
     question_coverage: float
-    logical_structure: float
     hallucination_score: float
     error_message: str = ""
 
@@ -289,15 +288,36 @@ Inputs:
 [Retrieved docs]
 {retrieved_docs}
 
-Criteria:
-1) rules_compliance (bool): Does the answer follow the requested output_format?
-   - type ∈ ["qa","bulleted","table","json","report"]
-   - language ∈ ["ko","en"]: The answer must be in the requested language.
-2) question_coverage (float): Score from 0.0 to 1.0. How well does the answer address the refined question (intent, scope, constraints)?
-3) logical_structure (float): Score from 0.0 to 1.0. How coherent and logically well-structured is the answer?
-4) hallucination_score (float): 0.0–1.0. To what extent is the answer grounded in the retrieved docs?
-   - 1.0 = entirely grounded, 0.0 = completely hallucinated.
-                                          
+Scoring policy (deterministic):
+- For EACH criterion, choose ONE value from {{0, 0.25, 0.50, 0.75, 1.00}}.
+- Use the anchor descriptions below. If borderline, ROUND DOWN to the nearest anchor.
+- Provide a concise error_message highlighting the single most limiting issue when ANY score < 0.75; otherwise use an empty string.
+- Return JSON ONLY with the EXACT keys (no extra or missing): rules_compliance, question_coverage, hallucination_score, error_message.
+- If any score would be N/A, still include the key with 0.00.
+
+Criteria & anchors:
+
+1) rules_compliance (float): Adherence to hard rules (requested type/language/structure; no guessing beyond docs; no URLs/academic-style citations; no think/reasoning reveal; correct subtle attribution if Web info is used).
+   - 1.00: Fully matches requested type & language; respects all hard rules; attribution phrased correctly when needed and if Web Passages were used, the answer clearly signals web origin once (inline or closing note), phrased naturally without URLs/numeric citations.
+   - 0.75: Minor format/tone slips but type/language correct; no safety/grounding violations.
+   - 0.50: Multiple minor issues or one significant format error (e.g., partially wrong structure) but salvageable and Web Passages used but no explicit web attribution; or multiple redundant attributions.
+   - 0.25: Major type/structure mismatch or language mix; partial rule breaches (e.g., informal citations) without safety breach.
+   - 0.00: Ignores requested type/language or violates hard rules (e.g., reveals reasoning, adds URLs/academic citations, unsafe content) and Uses URLs/numeric citations/footnotes for web attribution; or mislabels the source.
+
+2) question_coverage (float): Degree to which the answer addresses the refined question (intent, scope, constraints, sub-questions).
+   - 1.00: Covers all core requirements, constraints, and sub-parts; anticipates edge cases as appropriate.
+   - 0.75: Covers the main intent and most constraints; minor omissions that don’t affect utility.
+   - 0.50: Partial coverage; misses at least one key requirement or constraint.
+   - 0.25: Largely off-target; touches the topic but not the user’s actual need.
+   - 0.00: Irrelevant or fails to address the question.
+
+3) hallucination_score (float): Groundedness in retrieved docs (RAG/Web); correct application of “RAG takes precedence”; proper subtle attribution when Web info is used.
+   - 1.00: All claims directly supported; no contradictions; attribution used correctly when needed.
+   - 0.75: Vast majority grounded; minor harmless inferences; no contradictions.
+   - 0.50: Several claims weakly/implicitly supported or missing clear grounding.
+   - 0.25: Many claims unsupported; suspected fabrication.
+   - 0.00: Mostly conjecture or contradicts the documents.
+
 Return JSON ONLY with:
 {schema}
 """).partial(schema=parser.get_format_instructions())
@@ -320,7 +340,6 @@ Return JSON ONLY with:
         passed = (
             result.rules_compliance and
             result.question_coverage >= 0.7 and
-            result.logical_structure >= 0.7 and
             result.hallucination_score >= 0.7
         )
 

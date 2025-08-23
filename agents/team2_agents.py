@@ -14,8 +14,8 @@ import config
 from state import AgentState
 from utility_tools import vector_store_rag_search, deep_research_web_search, format_docs
 
-semantic_relevance_THRESHOLD = 0.7
-is_detailed_THRESHOLD = 0.8
+semantic_relevance_THRESHOLD = 0.5
+is_detailed_THRESHOLD = 0.5
 rag_search_num = 7
 web_search_num = 5
 total_docs_required = 5
@@ -135,22 +135,44 @@ def evaluate_documents(state: AgentState) -> Dict[str, Any]:
 
     parser = JsonOutputParser(p_object=DocEvaluationResult)
     single_doc_prompt = PromptTemplate.from_template("""
-You are the strict Quality Control Supervisor evaluator. Given the question summary and document,
-decide whether the document is good enough to support answering the question.
+You are a strict Quality Control Supervisor evaluator.
+Your job is to carefully assess whether the given document is sufficiently relevant and detailed to help answer the user’s question.
+Follow the instructions below without deviation and return ONLY a valid JSON object matching the schema.
 
-[Question Summary]
-{q_en_transformed}
+[Evaluation Guidelines]
+- Use the two scoring rubrics below independently: one for semantic_relevance and one for is_detailed.
+- Judge only based on the provided inputs. Do not invent information.
+- All contents of the document should be considered, not just part of the document.
 
-[RAG Query]
-{rag_query}
+[Scoring Guide — semantic_relevance]
+Choose EXACTLY one level for how well the document matches the question’s intent and constraints (subject, entities, context).
+- 0.00 = None: completely irrelevant or empty; contradicts the question or ignores core entities/constraints.
+- 0.25 = Low: superficial keyword overlap; misses main intent or key constraints; noticeable topic drift.
+- 0.50 = Partial: addresses the main topic but misses important constraints/context; mixed or uneven relevance.
+- 0.75 = Strong: satisfies most intent/constraints with minor mismatches or small gaps.
+- 1.00 = Exact: fully aligned with the question’s entities and constraints; no topic drift.
 
-[Document]
-{doc_text}
+[Scoring Guide — is_detailed]
+Choose EXACTLY one level for how specific and sufficient the document is to support a reliable answer.
+- 0.00 = None: empty/generic; no actionable specifics.
+- 0.25 = Low: few specifics; vague statements; lacks steps, data, or concrete facts.
+- 0.50 = Partial: some specifics but missing key details to answer fully; incomplete coverage.
+- 0.75 = Strong: solid specifics; covers most needed details with minor gaps.
+- 1.00 = Exact: comprehensive and specific (e.g., steps, parameters, examples, citations, or numbers); fully sufficient.
 
-Return JSON ONLY with the following fields:
-- semantic_relevance (float in [0,1]): Do the docs match the user's intent and constraints?
-- is_detailed (float in [0,1]): Do the docs provide enough specific details to comprehensively and reliably answer all parts of the question?
-- error_message (str): If anything is wrong (empty/irrelevant/too generic/duplicated), write a short Korean message; else "".
+[Error Message]
+- If the document is empty, irrelevant, duplicated, off-topic, or too generic/outdated for the question, write a short English note (<= 20 words).
+- Otherwise, return "".
+
+[Inputs]
+- Question Summary: {q_en_transformed}
+- RAG Query: {rag_query}
+- Document (excerpted for evaluation): {doc_text}
+
+[Output Instructions]
+- Return ONLY a valid JSON object; no commentary, Markdown, code fences, or extra keys.
+- Keys must exactly match the schema fields.
+- Values for the two scores MUST be one of: 0.00, 0.25, 0.50, 0.75, 1.00.
 
 Output schema:
 {schema}
