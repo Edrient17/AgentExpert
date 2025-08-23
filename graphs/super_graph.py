@@ -32,6 +32,28 @@ def manager_agent(state: AgentState) -> dict:
 
     user_question = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
 
+    try:
+        if last_name == "team1_evaluator" and str(last_content).strip() == "pass":
+            is_simple = state.get("is_simple_query", "No")
+            if is_simple == "Yes":
+                print("🧭 Manager 단축 라우팅: 간단질문 → Team3 직행")
+                return {
+                    "next_team_to_call": "team3",
+                    "manager_feedback": None,
+                    "global_loop_count": global_loop_count,
+                    "team3_retries": 0
+                }
+            else:
+                print("🧭 Manager 단축 라우팅: 일반질문 → Team2 탐색")
+                return {
+                    "next_team_to_call": "team2",
+                    "manager_feedback": None,
+                    "global_loop_count": global_loop_count,
+                    "team2_retries": 0
+                }
+    except Exception as e:
+        print(f"⚠️ is_simple_query 기반 라우팅 실패: {e} (기본 LLM 라우팅으로 진행)")
+
     parser = JsonOutputParser(p_object=ManagerDecision)
     prompt = PromptTemplate.from_template("""
 You are the project manager of a multi-agent RAG system. Your role is to review the work of your teams (Team1, Team2, Team3) and decide the next step with surgical precision.

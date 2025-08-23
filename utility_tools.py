@@ -2,15 +2,15 @@
 
 import os
 import torch
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from langchain_core.documents import Document
 from langchain_core.tools import tool
 from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.vectorstores import FAISS
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel, Field
-
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
 import config
@@ -207,3 +207,37 @@ Return ONLY a structured object that matches the given schema (no extra text).
     except Exception as e:
         print(f"❌ Deep Research Tool 실행 오류: {e}")
         return []
+
+
+
+class SimpleQueryResult(BaseModel):
+    is_simple_query: Literal["Yes", "No"]
+
+@tool
+def classify_simple_query(user_question: str) -> dict:
+    """
+    LLM을 사용해 user_question이 '간단한 상식/개념적 질문'인지,
+    아니면 '자료 검색/최신성/출처'가 필요한 질문인지 판정.
+    """
+    llm = ChatOpenAI(model=getattr(config, "LLM_MODEL_TEAM1", "gpt-4.1"), temperature=0)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", 
+        "You are a classifier. Classify whether the given user question can be answered "
+        "directly with only 'simple calculation' or 'current affairs knowledge', "
+        "OR whether it requires retrieval/search.\n\n"
+        "- 'Yes': Only if the question can be answered using just simple mathematical calculations "
+        "or well-known current affairs knowledge.\n\n"
+        "- 'No': ALL other cases. This includes any question that requires search or lookup, "
+        "such as general knowledge, definitions, concepts, specific facts, citations, statistics, prices, "
+        "company/product details, law, medicine, or other specialized knowledge.\n\n"
+        "Your response must be only the word 'Yes' or the word 'No', and nothing else."),
+        ("human", "{question}")
+    ])
+    chain = prompt | llm.with_structured_output(SimpleQueryResult)
+
+    try:
+        result = chain.invoke({"question": user_question})
+        return result.is_simple_query
+    except Exception as e:
+        print(f"⚠️ classify_simple_query 실행 실패: {e}")
+        return "No"

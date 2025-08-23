@@ -28,9 +28,10 @@ class AgentState(TypedDict, total=False):
     best_rag_query: Optional[str]
 
     # Team2가 누적/평가해 모으는 문서 버킷
-    # (하위 노드 반복 호출 동안 계속 append되어야 하므로 list_concat로 누적)
     rag_docs: Annotated[List[Document], list_concat]
     web_docs: Annotated[List[Document], list_concat]
+
+    is_simple_query: Literal["Yes", "No"]
 
     # 재시도/루프 카운터
     team1_retries: int

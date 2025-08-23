@@ -10,6 +10,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 from pydantic import BaseModel, Field
+from utility_tools import classify_simple_query
 
 import config
 from state import AgentState
@@ -59,6 +60,14 @@ def process_question(state: AgentState) -> Dict[str, Any]:
     if not user_input.strip():
         return {"messages": [ToolMessage(content="fail: 입력된 질문이 없습니다.", name="team1_worker", tool_call_id=str(uuid.uuid4()))]}
 
+    # --- Simple Query Classification via Tool ---
+    try:
+        check_simple = classify_simple_query.func(user_input)
+        print(f"🧩 classify_simple_query(LLM) → {check_simple}")
+    except Exception as e:
+        print(f"⚠️ classify_simple_query 실행 실패: {e}")
+        check_simple = "No"
+
     parser = JsonOutputParser(p_object=QuestionProcessingResult)
     prompt = PromptTemplate.from_template("""
 You are the first-stage agent in a RAG pipeline.
@@ -67,7 +76,8 @@ TASKS
 1) q_validity: Decide if the user input is a valid, answerable question (True/False).
    - false if too vague / missing constraints / unsafe.
 2) q_en_transformed: Rewrite the question into clear English (preserve domain terms, numbers, units). Do not include content about the output format.
-3) rag_queries: Generate 2-4 concise and keyword-focused search queries. Each query should extract the essential nouns and core intent from the user's input.
+3) rag_queries: Generate 2-4 detailed and context-rich search queries that capture the full nuance of the user's input.
+   - Construct a query focused on the key entities and their relationships.
    - Mix styles (keyword, semantic paraphrase, entity-focused, time-bounded) when applicable.
    - Do NOT invent facts not implied by the user input. Return 2–4 items only.
 4) output_format: ALWAYS return a 2-item array [type, language].
@@ -101,6 +111,7 @@ USER INPUT:
         return {
             "user_input": user_input,
             "q_en_transformed": result_dict.get("q_en_transformed", ""),
+            "is_simple_query": check_simple,
             "messages": [
                 AIMessage(
                     content="사용자 질문을 성공적으로 분석했습니다.",
