@@ -1,5 +1,6 @@
 import uuid
 from langchain_core.messages import HumanMessage, AIMessage
+import os
 
 # --- 1. MCP 라이브러리 임포트 ---
 from mcp.server.fastmcp import FastMCP
@@ -13,7 +14,6 @@ from state import AgentState
 mcp = FastMCP(
     name="My Professional RAG Agent",
     instructions="A multi-agent system made with LangGraph. It takes questions and generates professional answers.",
-    host="0.0.0.0"
 )
 
 # LangGraph 앱을 미리 로드합니다.
@@ -56,4 +56,7 @@ def ask_agent(question: str) -> str:
 
 # --- 5. 서버 실행 ---
 if __name__ == "__main__":
+    # Cloud Run은 $PORT를 자동으로 제공합니다.
+    mcp.settings.host = "0.0.0.0"
+    mcp.settings.port = int(os.environ.get("PORT", "8080"))
     mcp.run(transport="streamable-http")
