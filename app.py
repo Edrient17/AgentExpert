@@ -1,9 +1,12 @@
 import streamlit as st
 import uuid
 from typing import Dict, Any, List
+import re
+import os 
 
 # --- 프로젝트 파일 임포트 ---
-from state import AgentState # 변경된 State
+from state import AgentState
+from graph_factory import get_graph_app
 from graphs.team1_graph import create_team1_graph
 from graphs.team2_graph import create_team2_graph
 from graphs.team3_graph import create_team3_graph
@@ -26,22 +29,7 @@ st.markdown("""
 - **Team 3**: 수집된 정보를 바탕으로 최종 답변을 생성하고 검수합니다.
 """)
 
-# --- LangGraph 앱 초기화 (st.cache_resource 사용) ---
-@st.cache_resource
-def get_graph_app():
-    """
-    각 팀의 서브그래프와 슈퍼그래프를 빌드하고 컴파일하여
-    실행 가능한 LangGraph 애플리케이션 객체를 반환합니다.
-    """
-    print("🚀 다중 에이전트 RAG 시스템을 초기화합니다...")
-    with st.spinner("에이전트 시스템을 준비하는 중입니다... 잠시만 기다려주세요."):
-        team1_app = create_team1_graph()
-        team2_app = create_team2_graph()
-        team3_app = create_team3_graph()
-        super_graph_app = create_super_graph(team1_app, team2_app, team3_app)
-    print("✅ 시스템 준비 완료!")
-    return super_graph_app
-
+# --- LangGraph 앱 로드 ---
 app = get_graph_app()
 
 # --- 채팅 기록 관리를 위한 세션 상태 초기화 ---
@@ -174,7 +162,34 @@ if prompt := st.chat_input("LangGraph의 주요 특징을 표로 정리해줘.")
         progress_placeholder.empty()
         
         if final_answer:
-            answer_placeholder.markdown(final_answer)
+            # 답변에서 마크다운 테이블과 이미지 경로를 분리
+            image_path_marker = "**[생성된 표 이미지 보기]"
+            
+            if image_path_marker in final_answer:
+                parts = final_answer.split(image_path_marker)
+                markdown_content = parts[0].strip()
+                link_part = parts[1]
+
+                # 정규표현식으로 괄호 안의 파일 경로 추출
+                match = re.search(r'\((.*?)\)', link_part)
+                if match:
+                    image_path = match.group(1)
+                    
+                    # 1. 마크다운 테이블 표시
+                    answer_placeholder.markdown(markdown_content)
+                    
+                    # 2. 추출된 경로의 이미지를 st.image로 표시
+                    if os.path.exists(image_path):
+                        st.image(image_path, caption="생성된 표 이미지")
+                    else:
+                        st.warning(f"이미지 파일을 찾을 수 없습니다: {image_path}")
+                else:
+                    # 링크 형식이 잘못된 경우, 원본 전체를 표시
+                    answer_placeholder.markdown(final_answer)
+            else:
+                # 테이블 이미지가 없는 일반 답변은 그대로 표시
+                answer_placeholder.markdown(final_answer)
+
             st.session_state.messages.append({"role": "assistant", "content": final_answer})
         elif error_message:
             st.error(f"답변 생성에 실패했습니다: {error_message}")

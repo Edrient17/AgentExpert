@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 import config
 from state import AgentState
-from utility_tools import format_docs
+from utility_tools import format_docs, create_table_image
 
 DOCS_ANSWER_PROMPT = PromptTemplate.from_template("""
 You are the Team 3 answer generator in a Multi-Agent Q&A pipeline.
@@ -63,8 +63,8 @@ Format guidelines (flexible within type):
   • You may group bullets by mini-headings (bold) and use one level of sub-bullets when needed.
 - table:
   • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.
-  • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.
-  • Use "N/A" for missing values.
+  • Include as many rows as needed (up to ~100). Use "N/A" for missing values.
+  • IMPORTANT: You MUST return ONLY the raw Markdown table content, starting with a header row (e.g., `| Header 1 | ... |`) and nothing else. Do NOT include any introductory or concluding sentences, code fences, or notes.
 - report:
   • Design your own section plan (3–10 H2 sections) tailored to the question.
   • Each section 3–8 sentences; include lists/tables where helpful. Subsections (H3) allowed.
@@ -115,12 +115,8 @@ Format guidelines (flexible within type):
   • You may group bullets by mini-headings (bold) and use one level of sub-bullets when needed.
 - table:
   • Produce a Markdown table with a header row; derive 3–9 sensible columns from the question/context.
-  • Include as many rows as needed (up to ~100). Add a short "Notes" paragraph below if clarification helps.
-  • Use "N/A" for missing values.
-- json:
-  • Return valid JSON ONLY (no code fences).
-  • Always include an "answer" string. You may add keys like "evidence", "steps", "assumptions", "limitations", "confidence" (0–1), etc.
-  • Keep keys concise; use arrays/objects as needed.
+  • Include as many rows as needed (up to ~100). Use "N/A" for missing values.
+  • IMPORTANT: You MUST return ONLY the raw Markdown table content, starting with a header row (e.g., `| Header 1 | ... |`) and nothing else. Do NOT include any introductory or concluding sentences, code fences, or notes.
 - report:
   • Design your own section plan (3–10 H2 sections) tailored to the question.
   • Each section 3–8 sentences; include lists/tables where helpful. Subsections (H3) allowed.
@@ -247,7 +243,24 @@ Your previous answer was not satisfactory. You MUST revise your answer based on 
 
     try:
         result = chain.invoke(invoke_params)
-        return {"messages": [AIMessage(content=result.content.strip())]}
+        final_content = result.content.strip()
+
+        if out_type == "table" and final_content.startswith("|"):
+            try:
+                # 새로 추가한 도구를 직접 호출합니다.
+                image_path = create_table_image.func(markdown_string=final_content)
+                if not image_path.startswith("Error"):
+                    # 성공 시, 마크다운과 이미지 경로를 함께 포함
+                    final_content += f"\n\n---\n\n**[생성된 표 이미지 보기]({image_path})**"
+                else:
+                    # 실패 시, 에러 메시지를 답변에 포함
+                    final_content += f"\n\n(참고: 표 이미지 생성 실패 - {image_path})"
+            except Exception as tool_e:
+                print(f"⚠️ Table Image Tool 직접 호출 실패: {tool_e}")
+                final_content += f"\n\n(참고: 표 이미지 생성 중 오류 발생)"
+
+
+        return {"messages": [AIMessage(content=final_content)]}
     except Exception as e:
         print(f"❌ Team 3 (답변 생성) 오류: {e}")
         return {"messages": [ToolMessage(content=f"fail: Team3 Worker 오류 - {e}", name="team3_worker", tool_call_id=str(uuid.uuid4()))]}
@@ -294,6 +307,7 @@ Scoring policy (deterministic):
 - Provide a concise error_message highlighting the single most limiting issue when ANY score < 0.75; otherwise use an empty string.
 - Return JSON ONLY with the EXACT keys (no extra or missing): rules_compliance, question_coverage, hallucination_score, error_message.
 - If any score would be N/A, still include the key with 0.00.
+- If the [Generated answer] contains a Markdown table AND a link to an image file (e.g., `[생성된 표 이미지 보기](...)`), you MUST IGNORE the image link part for your evaluation. Your assessment should be based solely on the content and structure of the Markdown table itself.
 
 Criteria & anchors:
 

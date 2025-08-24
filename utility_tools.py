@@ -3,6 +3,10 @@
 import os
 import torch
 from typing import List, Optional, Literal
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import matplotlib as mpl
+import uuid
 
 from langchain_core.documents import Document
 from langchain_core.tools import tool
@@ -241,3 +245,65 @@ def classify_simple_query(user_question: str) -> dict:
     except Exception as e:
         print(f"⚠️ classify_simple_query 실행 실패: {e}")
         return "No"
+    
+# =========================================================
+# Tool 3: 마크다운 테이블 이미지 생성
+# =========================================================
+
+class TableImageInput(BaseModel):
+    markdown_string: str = Field(description="마크다운 형식의 테이블 텍스트")
+    output_dir: str = Field(default="output/tables", description="이미지 파일이 저장될 디렉토리")
+
+@tool(args_schema=TableImageInput)
+def create_table_image(markdown_string: str, output_dir: str = "output/tables") -> str:
+    """
+    마크다운 형식의 테이블 텍스트를 입력받아 이미지(PNG) 파일로 저장하고,
+    해당 파일의 경로를 반환합니다.
+    """
+    print(f"🛠️ Table Image Tool 실행...")
+    try:        
+        plt.rc("font", family='NanumGothic')
+        plt.rcParams['axes.unicode_minus'] = False
+
+        if not markdown_string.strip():
+            raise ValueError("입력된 마크다운 문자열이 비어있습니다.")
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 마크다운 파싱
+        lines = [line.strip() for line in markdown_string.strip().split('\n')]
+        if len(lines) < 3: # 헤더, 구분선, 최소 1개 데이터 행
+            raise ValueError("올바른 마크다운 테이블 형식이 아닙니다.")
+
+        # 헤더와 데이터 분리
+        header = [h.strip() for h in lines[0].strip('|').split('|')]
+        data = []
+        for line in lines[2:]:
+            data.append([d.strip() for d in line.strip('|').split('|')])
+
+        if not header or not data:
+             raise ValueError("테이블 헤더 또는 데이터를 파싱할 수 없습니다.")
+
+        # matplotlib을 사용해 테이블 이미지 생성
+        fig, ax = plt.subplots(figsize=(len(header) * 1.5, len(data) * 0.5 + 1))
+        ax.axis('tight')
+        ax.axis('off')
+
+        table = ax.table(cellText=data, colLabels=header, loc='center', cellLoc='left')
+        table.auto_set_font_size(False)
+        table.set_fontsize(10)
+        table.scale(1.5, 1.5)
+
+        table.auto_set_column_width(col=list(range(len(header))))
+        
+        # 파일 저장
+        file_name = f"{uuid.uuid4()}.png"
+        file_path = os.path.join(output_dir, file_name)
+        plt.savefig(file_path, bbox_inches='tight', pad_inches=0.1)
+        plt.close(fig)
+
+        print(f"✅ 테이블 이미지 생성 완료: {file_path}")
+        return file_path
+    except Exception as e:
+        print(f"❌ Table Image Tool 실행 오류: {e}")
+        return f"Error: 테이블 이미지 생성에 실패했습니다. ({e})"
