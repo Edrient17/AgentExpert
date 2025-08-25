@@ -131,7 +131,6 @@ def evaluate_question(state: AgentState) -> Dict[str, Any]:
         return {"messages": [ToolMessage(content="fail: Team1 평가자가 분석 결과를 찾을 수 없습니다.", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
 
     current_retries = state.get("team1_retries", 0)
-    state["team1_retries"] = current_retries + 1
 
     processed_data = last_message.additional_kwargs
     user_input = next((msg.content for msg in state['messages'] if isinstance(msg, HumanMessage)), "")
@@ -224,9 +223,9 @@ Output schema:
             best_query = rag_queries[best_idx]
             
             return {
-                # ⬇️ 상태에 직접 저장
                 "best_rag_query": best_query,
                 "q_en_transformed": q_en_transformed,
+                "team1_retries": 0,
                 "messages": [
                     ToolMessage(
                         content="pass",
@@ -244,14 +243,26 @@ Output schema:
             err = result.error_message or "Team1: 평가 기준 미달 (Team1: Evaluation criteria not met)"
             if current_retries < config.MAX_RETRIES_TEAM1:
                 print(f"🔁 Team 1 평가 실패. 재시도를 요청합니다. ({current_retries + 1}/{config.MAX_RETRIES_TEAM1})")
-                return {"messages": [ToolMessage(content=f"retry: {err}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
+                return {
+                    "team1_retries": current_retries + 1,
+                    "messages": [ToolMessage(content=f"retry: {err}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]
+                    }
             else:
                 print(f"❌ Team 1 최종 실패 (재시도 {config.MAX_RETRIES_TEAM1}회 초과).")
-                return {"messages": [ToolMessage(content=f"fail: {err}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
+                return {
+                    "team1_retries": current_retries + 1,
+                    "messages": [ToolMessage(content=f"fail: {err}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]
+                    }
              
     except Exception as e:
         print(f"❌ Team 1 (결과 평가) 오류: {e}")
         if current_retries < config.MAX_RETRIES_TEAM1:
-             return {"messages": [ToolMessage(content="retry", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            return {
+                "team1_retries": current_retries + 1,
+                "messages": [ToolMessage(content="retry", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]
+                }
         else:
-             return {"messages": [ToolMessage(content=f"fail: Team1 Evaluator 오류 - {e}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            return {
+                "team1_retries": current_retries + 1,
+                "messages": [ToolMessage(content=f"fail: Team1 Evaluator 오류 - {e}", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))]
+            }

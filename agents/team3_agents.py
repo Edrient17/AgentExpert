@@ -165,7 +165,6 @@ def _get_context_from_history(state: AgentState) -> dict:
                     context["web_docs"] = web_docs
                     context["docs"] = rag_docs + web_docs
                 else:
-                    # 구버전 호환: 합본만 온 경우
                     context["docs"] = msg.additional_kwargs.get("retrieved_docs", [])
                 break
 
@@ -273,7 +272,6 @@ def evaluate_answer(state: AgentState) -> Dict[str, Any]:
         return {"messages": [ToolMessage(content="fail: 평가할 답변을 찾을 수 없습니다.", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
     
     current_retries = state.get("team3_retries", 0)
-    state["team3_retries"] = current_retries + 1
     
     answer = generated_answer_msg.content
     context = _get_context_from_history(state)
@@ -354,28 +352,41 @@ Return JSON ONLY with:
         is_simple = state.get("is_simple_query", "No")
 
         if is_simple == "Yes":
-            # 간단질문: retrieved docs 없어도 허용
             passed = (result.rules_compliance and result.question_coverage >= 0.7)
         else:
-            # 일반질문: grounding 필수
             passed = (result.rules_compliance and 
                     result.question_coverage >= 0.7 and 
                     result.hallucination_score >= 0.7)
 
         if passed:
-            return {"messages": [ToolMessage(content="pass", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            return {
+                "team3_retries": 0,
+                "messages": [ToolMessage(content="pass", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]
+                }
         else:
             if current_retries < config.MAX_RETRIES_TEAM3:
                 print(f"🔁 Team 3 평가 실패. 재시도를 요청합니다. ({current_retries + 1}/{config.MAX_RETRIES_TEAM3})")
                 err = result.error_message or "답변 품질 미달 (Answer quality is insufficient)"
-                return {"messages": [ToolMessage(content=f"retry: {err}", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
+                return {
+                    "team3_retries": current_retries + 1,
+                    "messages": [ToolMessage(content=f"retry: {err}", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]
+                    }
             else:
                 print(f"❌ Team 3 최종 실패 (재시도 {config.MAX_RETRIES_TEAM3}회 초과).")
-                return {"messages": [ToolMessage(content="fail: 답변 품질 미달", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
+                return {
+                    "team3_retries": current_retries + 1,
+                    "messages": [ToolMessage(content="fail: 답변 품질 미달", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]
+                    }
 
     except Exception as e:
         print(f"❌ Team 3 (답변 평가) 오류: {e}")
         if current_retries < config.MAX_RETRIES_TEAM3:
-            return {"messages": [ToolMessage(content="retry", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            return {
+                "team3_retries": current_retries + 1,
+                "messages": [ToolMessage(content="retry", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]
+                }
         else:
-            return {"messages": [ToolMessage(content=f"fail: Team3 Evaluator 오류 - {e}", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]}
+            return {
+                "team3_retries": current_retries + 1,
+                "messages": [ToolMessage(content=f"fail: Team3 Evaluator 오류 - {e}", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))]
+                }

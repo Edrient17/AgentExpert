@@ -4,7 +4,7 @@ from typing import Literal, Optional
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import ToolMessage, HumanMessage
+from langchain_core.messages import AIMessage, ToolMessage, HumanMessage
 from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END
 
@@ -104,15 +104,24 @@ Provide your decision in the following JSON format.
         reason = result.get("reason", "LLM으로부터 이유를 받지 못했습니다.")
         feedback = result.get("feedback")
 
-        is_backward_loop = (getattr(last_message, 'name', 'N/A') == "team2_evaluator" and next_team == "team1")
+        is_t1_loop = (getattr(last_message, 'name', 'N/A') == "team1_evaluator" and next_team == "team1")
+        is_t2_loop = (getattr(last_message, 'name', 'N/A') == "team2_evaluator" and next_team == "team1")
+        is_t3_loop = (getattr(last_message, 'name', 'N/A') == "team3_evaluator" and next_team == "team3")
         
-        if is_backward_loop:
+        if is_t1_loop or is_t2_loop or is_t3_loop:
             global_loop_count += 1
             print(f"🔄 매니저가 백워드 루프를 감지했습니다. 글로벌 루프 카운트: {global_loop_count}")
             if global_loop_count >= config.MAX_GLOBAL_LOOPS:
                 print(f"❌ 글로벌 루프 제한({config.MAX_GLOBAL_LOOPS}회)을 초과하여 프로세스를 종료합니다.")
-                next_team = "end" # Override the decision and force termination
+                # next_team = "end" # Override the decision and force termination
                 feedback = "Process terminated to prevent an infinite loop."
+                error_content = f"죄송합니다. 내부 처리 한도를 초과하여 답변을 생성할 수 없습니다. 질문을 바꿔서 다시 시도해 주세요."
+                return {
+                    "next_team_to_call": "end",
+                    "manager_feedback": feedback,
+                    "global_loop_count": global_loop_count,
+                    "messages": [AIMessage(content=error_content)]
+                }
 
         print(f"🧠 매니저 결정: {next_team}, 이유: {reason}")
         

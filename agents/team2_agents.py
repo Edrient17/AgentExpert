@@ -229,7 +229,7 @@ Output schema:
             ],
             "rag_docs": rag_acc,
             "web_docs": web_acc,
-            "team2_retries": 0,  # ✅ 리셋
+            "team2_retries": 0,
         }
     else:
         decision = "fallback_to_web" if source == "rag" else "retry_web"
