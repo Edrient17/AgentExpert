@@ -1,3 +1,7 @@
+# AgentExpert: LangGraph 기반 신뢰형 지식 검색 및 QA 플랫폼
+
+<img width="767" height="386" alt="image" src="https://github.com/user-attachments/assets/cae00498-ceaa-43fb-ae24-41c2c9a6c813" />
+
 <b>1. .env 파일 필요 시 개인적으로 요청. .env 파일은, app.py와 같은 directory(폴더) 내에 넣으면 됩니다.</b><br>
 <b>2. requirements.txt에 나와있는 라이브러리들을 pip install을 통해 설치해야 합니다.(새로운 anaconda 환경을 만들고 거기에 설치하는 것을 추천합니다.</b><br>
 <b>3. 프로그램 실행 순서</b><br>
