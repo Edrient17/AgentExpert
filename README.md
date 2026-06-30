@@ -87,6 +87,8 @@ Tesseract is only needed when PDF ingestion requires OCR. English OCR works with
 streamlit run app.py
 ```
 
+The project disables Streamlit's file watcher in `.streamlit/config.toml`.
+
 For a quick smoke test, ask:
 
 ```text
