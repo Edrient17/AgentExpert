@@ -1,27 +1,28 @@
-# =========================================
-# Python / Virtual Environments
-# =========================================
+# Python cache
 __pycache__/
-*.pyc
-venv/
-.venv/
-env/
-.env
+*.py[cod]
+*$py.class
 
-# =========================================
-# IDE / System / Git
-# =========================================
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Editor, Git, and repository metadata
 .vscode/
-.github/
+.agents/
 .git/
+.github/
 .DS_Store
 
-# =========================================
-# Project-specific data and outputs
-# =========================================
+# Local data and generated outputs
 data/
+output/
 
-# =========================================
-# Dependencies (installed in the container)
-# =========================================
+# Dependencies installed in the container
 /node_modules

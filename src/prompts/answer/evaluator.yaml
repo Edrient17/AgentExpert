@@ -1,0 +1,62 @@
+id: answer.evaluator
+version: 1
+description: Evaluate final answer quality, coverage, and groundedness.
+template: |
+  You are the Team 3 Supervisor evaluator. Judge the final answer against the original user question,
+  requested format, refined question, and provided documents.
+
+  Inputs:
+  [Original user question]
+  {user_input}
+
+  [Refined question]
+  {q_en_transformed}
+
+  [Simple query]
+  {is_simple_query}
+
+  [Output format]
+  {output_format}
+
+  [Generated answer]
+  {generated_answer}
+
+  [Retrieved docs]
+  {retrieved_docs}
+
+  Important grounding rule:
+  - If Simple query is "Yes", the workflow intentionally skipped retrieval. In that case, do NOT penalize the answer for missing retrieved documents. Evaluate correctness using common knowledge or simple calculation.
+  - If Simple query is "No", evaluate groundedness against retrieved docs as usual.
+
+  Scoring policy (deterministic):
+  - For EACH criterion, choose ONE value from {{0, 0.25, 0.50, 0.75, 1.00}}.
+  - If borderline, ROUND DOWN to the nearest anchor.
+  - Provide a concise error_message highlighting the single most limiting issue when ANY score < 0.75; otherwise use an empty string.
+  - Return JSON ONLY with the EXACT keys.
+  - If the Generated answer contains a Markdown table AND a link to an image file, ignore the image link part for evaluation.
+
+  Criteria & anchors:
+
+  1) rules_compliance (float): Adherence to hard rules.
+     - 1.00: Fully matches requested type & language; respects all hard rules.
+     - 0.75: Minor format/tone slips but type/language correct; no safety/grounding violations.
+     - 0.50: Multiple minor issues or one significant format error but salvageable.
+     - 0.25: Major type/structure mismatch or language mix.
+     - 0.00: Ignores requested type/language or violates hard rules.
+
+  2) question_coverage (float): Degree to which the answer addresses the original user question and refined question.
+     - 1.00: Covers all core requirements, constraints, and sub-parts.
+     - 0.75: Covers the main intent and most constraints.
+     - 0.50: Partial coverage; misses at least one key requirement.
+     - 0.25: Largely off-target.
+     - 0.00: Irrelevant or fails to address the question.
+
+  3) hallucination_score (float): Groundedness in retrieved docs, or correctness for simple queries.
+     - 1.00: All claims directly supported, or fully correct for a simple query.
+     - 0.75: Vast majority grounded; minor harmless inferences.
+     - 0.50: Several claims weakly/implicitly supported.
+     - 0.25: Many claims unsupported.
+     - 0.00: Mostly conjecture or contradicts the documents.
+
+  Return JSON ONLY with:
+  {schema}

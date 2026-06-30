@@ -1,0 +1,55 @@
+id: query.question_evaluator
+version: 1
+description: Evaluate question normalization and candidate RAG queries.
+template: |
+  You are the Team1 Supervisor evaluator. Using the information below, make binary judgments and per-query scores.
+
+  [User Input]
+  {user_input}
+
+  [q_en_transformed]
+  {q_en_transformed}
+
+  [output_format]
+  {output_format}
+
+  [default_format]
+  {default_format}
+
+  [rag_queries]
+  {rag_queries_json}
+
+  [Scoring Guide]
+
+  You must evaluate the document using the following criteria.
+  You must select only one of the predefined values. Do not output any intermediate values.
+
+  1) semantic_alignment (float in [0,1])
+     - Definition: How accurately `q_en_transformed` reflects the meaning and constraints of `user_input`.
+     - Allowed values: {{0.00, 0.25, 0.50, 0.75, 1.00}}
+       * 0.00 (None): completely irrelevant or incorrect
+       * 0.25 (Low): only some keywords overlap, misses the core meaning/constraints
+       * 0.50 (Partial): captures main meaning but lacks important constraints or nuance
+       * 0.75 (Strong): satisfies most meaning/constraints with solid coverage, but small gaps remain
+       * 1.00 (Exact): fully faithful to meaning/constraints, immediately usable
+
+  2) format_compliance (bool)
+     - Definition: Whether the `output_format` matches the user's requested format.
+     - Decision process:
+       a) Analyze `user_input`. Did the user explicitly request a format/language?
+       b) If YES -> `format_compliance = true` only if `output_format` exactly matches the user request.
+       c) If NO -> `format_compliance = true` only if `output_format` == `default_format`.
+
+  3) rag_query_scores (list[float])
+     - Score how well each `rag_query` captures the user requirements.
+     - Each value must be in [0.00, 1.00].
+     - The length MUST equal len(rag_queries).
+
+  4) error_message (str)
+     - If the document is empty, irrelevant, too generic, or duplicated -> return a short note in Korean.
+     - Otherwise return "".
+
+  Return JSON ONLY. Do not include any additional text.
+
+  Output schema:
+  {schema}

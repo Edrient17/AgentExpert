@@ -1,14 +1,41 @@
-# AgentExpert: LangGraph 기반 신뢰형 지식 검색 및 QA 플랫폼
+# AgentExpert: LangGraph Multi-Agent RAG Q&A Platform
 
-<img width="767" height="386" alt="image" src="https://github.com/user-attachments/assets/cae00498-ceaa-43fb-ae24-41c2c9a6c813" />
+AgentExpert is a LangGraph-based multi-agent question-answering system. It analyzes a user question, retrieves supporting context from a local FAISS vector store and optional web research, then generates and evaluates a final answer.
 
-<b>1. .env 파일 필요 시 개인적으로 요청. .env 파일은, app.py와 같은 directory(폴더) 내에 넣으면 됩니다.</b><br>
-<b>2. requirements.txt에 나와있는 라이브러리들을 pip install을 통해 설치해야 합니다.(새로운 anaconda 환경을 만들고 거기에 설치하는 것을 추천합니다.</b><br>
-<b>3. 프로그램 실행 순서</b><br>
-(1) data 폴더에 문서를 넣는다.<br>
-(2) ingest_data.py를 실행한다. (데이터 벡터화)<br>
-(3) app.py를 실행한다. (streamlit 사이트 접속)<br>
+## Quick Start
 
-추가적으로, ingest_data.py를 사용하려면 tesseract를 별도로 설치해야 하는데, 하시려면 문의해주세요. <br>
+1. Create and activate a Python virtual environment.
+2. Install dependencies from `requirements.txt`.
+3. Create a `.env` file in the project root.
+4. Add PDF documents to a `data/` directory.
+5. Run `scripts/ingest_data.py` to build the vector store.
+6. Run `app.py` with Streamlit to use the chat interface.
 
-궁금한 점은 개인적으로 문의해주세요.
+```bash
+python -m pip install -r requirements.txt
+python scripts/ingest_data.py
+streamlit run app.py
+```
+
+On Windows, one common virtual environment setup is:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+## Required Environment Variables
+
+```env
+OPENAI_API_KEY=your_openai_api_key_here
+TESSERACT_LANG=eng
+```
+
+`TESSERACT_LANG` is optional. The project defaults to English OCR (`eng`).
+
+## Notes
+
+- Tesseract is required only when OCR is needed during PDF ingestion.
+- The local vector store is saved under `vector_store/`.
+- The Streamlit app and MCP server both use the same LangGraph workflow.

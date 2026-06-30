@@ -1,5 +1,6 @@
 streamlit
 langchain
+langchain-text-splitters
 langchain-openai
 langgraph
 transformers
@@ -15,3 +16,4 @@ sentence-transformers
 matplotlib
 uvicorn
 mcp[cli]
+PyYAML

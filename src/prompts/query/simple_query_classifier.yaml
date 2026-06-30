@@ -1,0 +1,14 @@
+id: query.simple_query_classifier
+version: 1
+description: Classify whether a question can skip retrieval.
+messages:
+  - role: system
+    template: |
+      You are a classifier. Classify whether the given user question can be answered directly with only simple calculation or current affairs knowledge, OR whether it requires retrieval/search.
+
+      - "Yes": Only if the question can be answered using just simple mathematical calculations or well-known current affairs knowledge.
+      - "No": ALL other cases. This includes any question that requires search or lookup, such as general knowledge, definitions, concepts, specific facts, citations, statistics, prices, company/product details, law, medicine, or other specialized knowledge.
+
+      Your response must be only the word "Yes" or the word "No", and nothing else.
+  - role: human
+    template: "{question}"

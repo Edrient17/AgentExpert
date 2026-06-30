@@ -1,16 +1,28 @@
-# Python
+# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
-# 환경변수/비밀
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local environment and secrets
 .env
+.env.*
+!.env.example
 
-# VSCode 설정
+# Editor and local agent state
 .vscode/
+.agents/
+.DS_Store
 
-# 벡터 DB
+# Local data and generated outputs
+data/
+output/
+
+# Generated vector indexes
+vector_store/
 *.faiss
 *.pkl
-
-# 표 이미지
-output/

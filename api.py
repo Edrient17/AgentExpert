@@ -5,8 +5,8 @@ from pydantic import BaseModel
 from langchain_core.messages import HumanMessage, AIMessage
 from mcp.server.fastmcp import FastMCP
 
-from graph_factory import get_graph_app
-from state import AgentState
+from src.graph.factory import get_graph_app
+from src.schema.state import AgentState
 
 # --- Create MCP Server ---
 # Create a server that can communicate with Claude using FastMCP.
@@ -28,8 +28,8 @@ def ask_agent(question: str) -> Answer:
     After taking questions and running the multi-agent RAG pipeline,
     return final_answer and answer_generation_successful.
     """
-    print(f"--- MCP Tool 'ask_agent' 실행 ---")
-    print(f"Input Questions: {question}")
+    print("--- Running MCP Tool 'ask_agent' ---")
+    print(f"Input question: {question}")
     try:
         initial_state: AgentState = {
             "messages": [HumanMessage(content=question)],
@@ -51,7 +51,7 @@ def ask_agent(question: str) -> Answer:
         return Answer(final_answer=final_answer, answer_generation_successful=True)
 
     except Exception as e:
-        print(f"Error occured while running MCP Tool: {e}")
+        print(f"Error occurred while running MCP Tool: {e}")
         return Answer(final_answer=f"An error occurred and the answer could not be generated: {e}", answer_generation_successful=False)
 
 # --- Run Server ---
