@@ -6,6 +6,13 @@ from dotenv import load_dotenv
 # Load environment variables from .env.
 load_dotenv()
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
 # -----------------------------
 # LLM model settings
 # -----------------------------
@@ -43,6 +50,7 @@ TESSDATA_PREFIX: str = os.getenv("TESSDATA_PREFIX", "")
 
 # Retrieval parameters
 TOP_K_PER_QUERY: int = 5
+ENABLE_WEB_RESEARCH: bool = _env_bool("ENABLE_WEB_RESEARCH", False)
 
 # Optional reranker settings
 USE_RERANKER: bool = False

@@ -6,6 +6,7 @@ from langchain_core.messages import HumanMessage, AIMessage
 from mcp.server.fastmcp import FastMCP
 
 from src.graph.factory import get_graph_app
+from src.schema.constants import SimpleQuery
 from src.schema.state import AgentState
 
 # --- Create MCP Server ---
@@ -34,7 +35,7 @@ def ask_agent(question: str) -> Answer:
         initial_state: AgentState = {
             "messages": [HumanMessage(content=question)],
             "team1_retries": 0, "team2_retries": 0, "team3_retries": 0,
-            "global_loop_count": 0, "is_simple_query": "No"
+            "global_loop_count": 0, "is_simple_query": SimpleQuery.NO
         }
         thread = {"configurable": {"thread_id": str(uuid.uuid4())}}
 

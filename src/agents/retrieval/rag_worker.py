@@ -4,6 +4,7 @@ from typing import Any, Dict
 from langchain_core.messages import ToolMessage
 
 from src.agents.retrieval.context import get_query_from_history
+from src.schema.constants import NodeName, fail_signal
 from src.schema.state import AgentState
 from src.tools.common import format_docs
 from src.tools.rag import vector_store_rag_search
@@ -19,8 +20,8 @@ def rag_search(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [
                 ToolMessage(
-                    content="fail: RAG query was not found.",
-                    name="rag_search",
+                    content=fail_signal("RAG query was not found."),
+                    name=NodeName.RAG_SEARCH,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]
@@ -32,7 +33,7 @@ def rag_search(state: AgentState) -> Dict[str, Any]:
             "messages": [
                 ToolMessage(
                     content=format_docs(rag_docs),
-                    name="rag_search_result",
+                    name=NodeName.RAG_SEARCH_RESULT,
                     tool_call_id=str(uuid.uuid4()),
                     additional_kwargs={"source_docs": rag_docs},
                 )
@@ -45,8 +46,8 @@ def rag_search(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [
                 ToolMessage(
-                    content=f"fail: RAG search error - {e}",
-                    name="rag_search",
+                    content=fail_signal(f"RAG search error - {e}"),
+                    name=NodeName.RAG_SEARCH,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]

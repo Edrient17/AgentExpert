@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 import config
 from src.agents.retrieval.context import get_query_from_history, get_refined_question_from_history
 from src.prompts.loader import load_prompt_template
+from src.schema.constants import NodeName, RetrievalSource, WorkflowSignal
 from src.schema.outputs import DocEvaluationResult
 from src.schema.state import AgentState
 
@@ -29,7 +30,7 @@ def _build_decision_payload(
         "messages": [
             ToolMessage(
                 content=decision,
-                name="team2_evaluator",
+                name=NodeName.RETRIEVAL_EVALUATOR,
                 tool_call_id=str(uuid.uuid4()),
                 additional_kwargs={
                     "source": source,
@@ -53,18 +54,21 @@ def evaluate_documents(state: AgentState) -> Dict[str, Any]:
 
     last_message = state["messages"][-1]
     docs_to_evaluate = last_message.additional_kwargs.get("source_docs", [])
-    source = "web" if last_message.name == "web_search_result" else "rag"
+    source = RetrievalSource.WEB if last_message.name == NodeName.WEB_SEARCH_RESULT else RetrievalSource.RAG
 
     rag_acc = list(state.get("rag_docs", []))
     web_acc = list(state.get("web_docs", []))
     current_retries = state.get("team2_retries", 0)
 
     if not docs_to_evaluate:
-        decision = "fallback_to_web" if source == "rag" else "retry_web"
+        decision = WorkflowSignal.FALLBACK_TO_WEB if source == RetrievalSource.RAG else WorkflowSignal.RETRY_WEB
         next_retries = current_retries + 1
         failed_reason = ""
+        if source == RetrievalSource.RAG and not config.ENABLE_WEB_RESEARCH:
+            decision = WorkflowSignal.FAIL
+            failed_reason = "web_research_disabled"
         if next_retries >= config.MAX_RETRIES_TEAM2:
-            decision = "fail"
+            decision = WorkflowSignal.FAIL
             failed_reason = "no_docs_to_evaluate"
         return _build_decision_payload(decision, source, rag_acc, web_acc, next_retries, failed_reason)
 
@@ -116,8 +120,8 @@ def evaluate_documents(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [
                 ToolMessage(
-                    content="pass",
-                    name="team2_evaluator",
+                    content=WorkflowSignal.PASS,
+                    name=NodeName.RETRIEVAL_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                     additional_kwargs={
                         "source": source,
@@ -134,10 +138,13 @@ def evaluate_documents(state: AgentState) -> Dict[str, Any]:
             "team2_retries": 0,
         }
 
-    decision = "fallback_to_web" if source == "rag" else "retry_web"
+    decision = WorkflowSignal.FALLBACK_TO_WEB if source == RetrievalSource.RAG else WorkflowSignal.RETRY_WEB
     next_retries = current_retries + 1
     failed_reason = ""
+    if source == RetrievalSource.RAG and not config.ENABLE_WEB_RESEARCH:
+        decision = WorkflowSignal.FAIL
+        failed_reason = "web_research_disabled"
     if next_retries >= config.MAX_RETRIES_TEAM2:
-        decision = "fail"
+        decision = WorkflowSignal.FAIL
         failed_reason = "budget_exhausted"
     return _build_decision_payload(decision, source, rag_acc, web_acc, next_retries, failed_reason)

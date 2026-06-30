@@ -1,6 +1,8 @@
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+from src.schema.constants import TeamName
 
 
 class QuestionProcessingResult(BaseModel):
@@ -39,10 +41,10 @@ class AnswerEvaluationResult(BaseModel):
 
 
 class ManagerDecision(BaseModel):
-    next_team: Literal["team1", "team2", "team3", "end"] = Field(
+    next_team: TeamName = Field(
         description="The next team to call, or end if workflow should stop."
     )
     feedback: Optional[str] = Field(
-        description="Concrete Korean feedback for the team when revision is needed."
+        description="Concrete feedback for the team when revision is needed."
     )
-    reason: str = Field(description="Short Korean explanation of the decision.")
+    reason: str = Field(description="Short explanation of the decision.")

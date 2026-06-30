@@ -8,6 +8,7 @@ from langchain_openai import ChatOpenAI
 
 import config
 from src.prompts.loader import load_prompt_template
+from src.schema.constants import NodeName, WorkflowSignal, fail_signal, retry_signal
 from src.schema.outputs import QuestionEvaluationResult
 from src.schema.state import AgentState
 
@@ -19,8 +20,8 @@ def evaluate_question(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [
                 ToolMessage(
-                    content="fail: Team1 evaluator could not find the analysis result.",
-                    name="team1_evaluator",
+                    content=fail_signal("Team1 evaluator could not find the analysis result."),
+                    name=NodeName.QUERY_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]
@@ -39,8 +40,8 @@ def evaluate_question(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [
                 ToolMessage(
-                    content="fail: Missing information required for evaluation.",
-                    name="team1_evaluator",
+                    content=fail_signal("Missing information required for evaluation."),
+                    name=NodeName.QUERY_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]
@@ -79,8 +80,8 @@ def evaluate_question(state: AgentState) -> Dict[str, Any]:
                 "team1_retries": 0,
                 "messages": [
                     ToolMessage(
-                        content="pass",
-                        name="team1_evaluator",
+                        content=WorkflowSignal.PASS,
+                        name=NodeName.QUERY_EVALUATOR,
                         tool_call_id=str(uuid.uuid4()),
                         additional_kwargs={
                             "q_en_transformed": q_en_transformed,
@@ -98,8 +99,8 @@ def evaluate_question(state: AgentState) -> Dict[str, Any]:
                 "team1_retries": current_retries + 1,
                 "messages": [
                     ToolMessage(
-                        content=f"retry: {err}",
-                        name="team1_evaluator",
+                        content=retry_signal(err),
+                        name=NodeName.QUERY_EVALUATOR,
                         tool_call_id=str(uuid.uuid4()),
                     )
                 ],
@@ -109,8 +110,8 @@ def evaluate_question(state: AgentState) -> Dict[str, Any]:
             "team1_retries": current_retries + 1,
             "messages": [
                 ToolMessage(
-                    content=f"fail: {err}",
-                    name="team1_evaluator",
+                    content=fail_signal(err),
+                    name=NodeName.QUERY_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ],
@@ -121,15 +122,15 @@ def evaluate_question(state: AgentState) -> Dict[str, Any]:
             return {
                 "team1_retries": current_retries + 1,
                 "messages": [
-                    ToolMessage(content="retry", name="team1_evaluator", tool_call_id=str(uuid.uuid4()))
+                    ToolMessage(content=WorkflowSignal.RETRY, name=NodeName.QUERY_EVALUATOR, tool_call_id=str(uuid.uuid4()))
                 ],
             }
         return {
             "team1_retries": current_retries + 1,
             "messages": [
                 ToolMessage(
-                    content=f"fail: Team1 Evaluator error - {e}",
-                    name="team1_evaluator",
+                    content=fail_signal(f"Team1 Evaluator error - {e}"),
+                    name=NodeName.QUERY_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ],

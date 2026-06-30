@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 import config
 from src.agents.answer.context import get_answer_context
 from src.prompts.loader import load_prompt_template
+from src.schema.constants import NodeName, is_retry_signal
 from src.schema.state import AgentState
 from src.tools.common import format_docs
 from src.tools.table_image import create_table_image
@@ -29,8 +30,8 @@ Your previous answer was not satisfactory. You MUST revise your answer based on 
 
     if (
         isinstance(last_message, ToolMessage)
-        and last_message.name == "team3_evaluator"
-        and last_message.content.startswith("retry")
+        and last_message.name == NodeName.ANSWER_EVALUATOR
+        and is_retry_signal(last_message.content)
     ):
         internal_feedback = last_message.content.replace("retry:", "").strip()
         if internal_feedback:
@@ -101,7 +102,7 @@ def generate_answer(state: AgentState) -> Dict[str, Any]:
             "messages": [
                 ToolMessage(
                     content=f"fail: Team3 Worker error - {e}",
-                    name="team3_worker",
+                    name=NodeName.ANSWER_WORKER,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]

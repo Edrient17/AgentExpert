@@ -2,6 +2,7 @@ from langgraph.graph import END, StateGraph
 
 from src.agents.answer.evaluator import evaluate_answer
 from src.agents.answer.generator import generate_answer
+from src.schema.constants import is_retry_signal
 from src.schema.state import AgentState
 
 
@@ -16,7 +17,7 @@ def create_answer_team_graph():
 
     def route_after_evaluation(state: AgentState) -> str:
         last_message = state["messages"][-1]
-        if last_message.content.startswith("retry"):
+        if is_retry_signal(last_message.content):
             print("[route] Answer Team retry.")
             return "generate_answer"
         print("[route] Answer Team finished.")

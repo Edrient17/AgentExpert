@@ -2,6 +2,7 @@ from langgraph.graph import END, StateGraph
 
 from src.agents.query.evaluator import evaluate_question
 from src.agents.query.worker import process_question
+from src.schema.constants import is_retry_signal
 from src.schema.state import AgentState
 
 
@@ -16,7 +17,7 @@ def create_query_team_graph():
 
     def route_after_evaluation(state: AgentState) -> str:
         last_message = state["messages"][-1]
-        if last_message.content.startswith("retry"):
+        if is_retry_signal(last_message.content):
             print("[route] Query Team retry.")
             return "process_question"
         print("[route] Query Team finished.")

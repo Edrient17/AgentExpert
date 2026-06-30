@@ -66,6 +66,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 | `TESSERACT_CMD` | No | auto-detected | Explicit path to `tesseract.exe` when auto-detection is not enough. |
 | `TESSDATA_PREFIX` | No | auto-detected | Explicit path to the Tesseract `tessdata` directory. |
 | `PORT` | No | `8080` | Port used by `api.py`. |
+| `ENABLE_WEB_RESEARCH` | No | `false` | Enables the current LLM-based web research fallback when RAG context is insufficient. |
 
 ## Build the Vector Store
 
@@ -92,6 +93,16 @@ What is 2 plus 2? Answer briefly.
 ```
 
 Simple questions skip retrieval and go directly from the Query Team to the Answer Team.
+
+## Web Research Fallback
+
+By default, web research is disabled:
+
+```env
+ENABLE_WEB_RESEARCH=false
+```
+
+The current web research tool is LLM-generated research summarization, not a live search API. Keep it disabled for stricter local-RAG behavior, or set `ENABLE_WEB_RESEARCH=true` if you explicitly want the Retrieval Team to use that fallback when local RAG does not return enough usable context.
 
 ## Run the MCP Server
 

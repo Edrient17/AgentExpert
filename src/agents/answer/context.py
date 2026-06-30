@@ -1,5 +1,6 @@
 from langchain_core.messages import HumanMessage, ToolMessage
 
+from src.schema.constants import NodeName, WorkflowSignal
 from src.schema.state import AgentState
 
 
@@ -28,7 +29,7 @@ def get_answer_context(state: AgentState) -> dict:
 
     if not context["docs"]:
         for msg in reversed(state["messages"]):
-            if isinstance(msg, ToolMessage) and msg.name == "team2_evaluator" and msg.content == "pass":
+            if isinstance(msg, ToolMessage) and msg.name == NodeName.RETRIEVAL_EVALUATOR and msg.content == WorkflowSignal.PASS:
                 rag_docs = msg.additional_kwargs.get("rag_docs", [])
                 web_docs = msg.additional_kwargs.get("web_docs", [])
                 if rag_docs or web_docs:
@@ -40,7 +41,7 @@ def get_answer_context(state: AgentState) -> dict:
                 break
 
     for msg in reversed(state["messages"]):
-        if isinstance(msg, ToolMessage) and msg.name == "team1_evaluator":
+        if isinstance(msg, ToolMessage) and msg.name == NodeName.QUERY_EVALUATOR:
             context["q_en_transformed"] = msg.additional_kwargs.get("q_en_transformed", "")
             context["output_format"] = msg.additional_kwargs.get("output_format", ["qa", "ko"])
             break

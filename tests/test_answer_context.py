@@ -2,6 +2,7 @@ from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from src.agents.answer.context import get_answer_context
+from src.schema.constants import NodeName, WorkflowSignal
 
 
 def test_answer_context_uses_original_user_input_and_team1_metadata():
@@ -9,9 +10,9 @@ def test_answer_context_uses_original_user_input_and_team1_metadata():
         "messages": [
             HumanMessage(content="Original question"),
             ToolMessage(
-                content="pass",
-                name="team1_evaluator",
-                tool_call_id="team1",
+                content=WorkflowSignal.PASS,
+                name=NodeName.QUERY_EVALUATOR,
+                tool_call_id="test-team1",
                 additional_kwargs={
                     "q_en_transformed": "Refined question",
                     "output_format": ["qa", "en"],

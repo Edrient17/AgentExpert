@@ -6,6 +6,7 @@ import os
 
 # --- Project imports ---
 from src.graph.factory import get_graph_app
+from src.schema.constants import NodeName, SimpleQuery, WorkflowSignal
 from src.schema.state import AgentState
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
@@ -49,8 +50,8 @@ def parse_progress(messages: List[Dict[str, Any]]) -> str:
 
     for msg in messages:
         # Analyze Team Query status.
-        if msg.name == "team1_evaluator":
-            if msg.content == "pass":
+        if msg.name == NodeName.QUERY_EVALUATOR:
+            if msg.content == WorkflowSignal.PASS:
                 team1_status = "✅ Done\n"
                 rag_query = msg.additional_kwargs.get("best_rag_query", "")
             else:
@@ -62,15 +63,15 @@ def parse_progress(messages: List[Dict[str, Any]]) -> str:
         progress_text += f"   - Best search query: `{rag_query}`\n\n"
 
     if team1_status == "✅ Done\n":
-        team2_started = any(m.name in ["rag_search_result", "web_search_result"] for m in messages)
-        team2_evaluated = any(m.name == "team2_evaluator" for m in messages)
+        team2_started = any(m.name in [NodeName.RAG_SEARCH_RESULT, NodeName.WEB_SEARCH_RESULT] for m in messages)
+        team2_evaluated = any(m.name == NodeName.RETRIEVAL_EVALUATOR for m in messages)
 
         if not team2_started:
              team2_status = "⏳ Collecting data...\n"
         
         if team2_evaluated:
-            team2_eval_msg = next((m for m in reversed(messages) if m.name == "team2_evaluator"), None)
-            if team2_eval_msg and team2_eval_msg.content == "pass":
+            team2_eval_msg = next((m for m in reversed(messages) if m.name == NodeName.RETRIEVAL_EVALUATOR), None)
+            if team2_eval_msg and team2_eval_msg.content == WorkflowSignal.PASS:
                 team2_status = "✅ Done\n"
             else:
                 team2_status = f"❌ Failed ({team2_eval_msg.content if team2_eval_msg else 'N/A'})\n"
@@ -78,12 +79,12 @@ def parse_progress(messages: List[Dict[str, Any]]) -> str:
         progress_text += f"**Team Search (Information Retrieval)**: {team2_status}\n"
 
         if team2_status == "✅ Done\n":
-            team3_evaluated = any(m.name == "final_evaluator" for m in messages)
+            team3_evaluated = any(m.name == NodeName.ANSWER_EVALUATOR for m in messages)
             if not team3_evaluated:
                 team3_status = "⏳ Generating answer...\n"
             else:
-                team3_eval_msg = next((m for m in reversed(messages) if m.name == "final_evaluator"), None)
-                if team3_eval_msg and team3_eval_msg.content == "pass":
+                team3_eval_msg = next((m for m in reversed(messages) if m.name == NodeName.ANSWER_EVALUATOR), None)
+                if team3_eval_msg and team3_eval_msg.content == WorkflowSignal.PASS:
                     team3_status = "✅ Done\n"
                 else:
                     team3_status = f"❌ Failed ({team3_eval_msg.content if team3_eval_msg else 'N/A'})\n"
@@ -121,7 +122,7 @@ if prompt := st.chat_input("Enter your question."):
                 "team2_retries": 0,
                 "team3_retries": 0,
                 "global_loop_count": 0,
-                "is_simple_query": "No"
+                "is_simple_query": SimpleQuery.NO
             }
             thread = {"configurable": {"thread_id": st.session_state.thread_id}}
 
@@ -147,7 +148,7 @@ if prompt := st.chat_input("Enter your question."):
                 # If no final answer was found, inspect the last message for an error.
                 if not final_answer:
                     last_msg = final_state_messages[-1]
-                    if last_msg.content != "pass":
+                    if last_msg.content != WorkflowSignal.PASS:
                         error_message = f"The workflow ended with a failure. (last step: {last_msg.name}, reason: {last_msg.content})"
 
         except Exception as e:

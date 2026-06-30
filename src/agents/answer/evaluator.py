@@ -9,6 +9,7 @@ from langchain_openai import ChatOpenAI
 import config
 from src.agents.answer.context import get_answer_context
 from src.prompts.loader import load_prompt_template
+from src.schema.constants import NodeName, WorkflowSignal, fail_signal, retry_signal
 from src.schema.outputs import AnswerEvaluationResult
 from src.schema.state import AgentState
 from src.tools.common import format_docs
@@ -21,8 +22,8 @@ def evaluate_answer(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [
                 ToolMessage(
-                    content="fail: Could not find an answer to evaluate.",
-                    name="team3_evaluator",
+                    content=fail_signal("Could not find an answer to evaluate."),
+                    name=NodeName.ANSWER_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]
@@ -38,8 +39,8 @@ def evaluate_answer(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [
                 ToolMessage(
-                    content="fail: Missing information required for evaluation.",
-                    name="team3_evaluator",
+                    content=fail_signal("Missing information required for evaluation."),
+                    name=NodeName.ANSWER_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]
@@ -81,7 +82,7 @@ def evaluate_answer(state: AgentState) -> Dict[str, Any]:
             return {
                 "team3_retries": 0,
                 "messages": [
-                    ToolMessage(content="pass", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))
+                    ToolMessage(content=WorkflowSignal.PASS, name=NodeName.ANSWER_EVALUATOR, tool_call_id=str(uuid.uuid4()))
                 ],
             }
 
@@ -92,8 +93,8 @@ def evaluate_answer(state: AgentState) -> Dict[str, Any]:
                 "team3_retries": current_retries + 1,
                 "messages": [
                     ToolMessage(
-                        content=f"retry: {err}",
-                        name="team3_evaluator",
+                        content=retry_signal(err),
+                        name=NodeName.ANSWER_EVALUATOR,
                         tool_call_id=str(uuid.uuid4()),
                     )
                 ],
@@ -104,8 +105,8 @@ def evaluate_answer(state: AgentState) -> Dict[str, Any]:
             "team3_retries": current_retries + 1,
             "messages": [
                 ToolMessage(
-                    content="fail: Answer quality is insufficient.",
-                    name="team3_evaluator",
+                    content=fail_signal("Answer quality is insufficient."),
+                    name=NodeName.ANSWER_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ],
@@ -116,15 +117,15 @@ def evaluate_answer(state: AgentState) -> Dict[str, Any]:
             return {
                 "team3_retries": current_retries + 1,
                 "messages": [
-                    ToolMessage(content="retry", name="team3_evaluator", tool_call_id=str(uuid.uuid4()))
+                    ToolMessage(content=WorkflowSignal.RETRY, name=NodeName.ANSWER_EVALUATOR, tool_call_id=str(uuid.uuid4()))
                 ],
             }
         return {
             "team3_retries": current_retries + 1,
             "messages": [
                 ToolMessage(
-                    content=f"fail: Team3 Evaluator error - {e}",
-                    name="team3_evaluator",
+                    content=fail_signal(f"Team3 Evaluator error - {e}"),
+                    name=NodeName.ANSWER_EVALUATOR,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ],

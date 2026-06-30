@@ -7,6 +7,7 @@ from langchain_openai import ChatOpenAI
 
 import config
 from src.prompts.loader import load_prompt_template
+from src.schema.constants import NodeName, fail_signal, is_retry_signal
 from src.schema.outputs import QuestionProcessingResult
 from src.schema.state import AgentState
 from src.tools.query_classifier import classify_simple_query
@@ -29,8 +30,8 @@ The previous attempt was not good enough. You MUST incorporate the following fee
 
     if (
         isinstance(last_message, ToolMessage)
-        and last_message.name == "team1_evaluator"
-        and last_message.content.startswith("retry")
+        and last_message.name == NodeName.QUERY_EVALUATOR
+        and is_retry_signal(last_message.content)
     ):
         internal_feedback = last_message.content.replace("retry:", "").strip()
         if internal_feedback:
@@ -54,8 +55,8 @@ def process_question(state: AgentState) -> Dict[str, Any]:
         return {
             "messages": [
                 ToolMessage(
-                    content="fail: No question was provided.",
-                    name="team1_worker",
+                    content=fail_signal("No question was provided."),
+                    name=NodeName.QUERY_WORKER,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]
@@ -102,7 +103,7 @@ def process_question(state: AgentState) -> Dict[str, Any]:
             "messages": [
                 ToolMessage(
                     content=f"fail: Team1 Worker error - {e}",
-                    name="team1_worker",
+                    name=NodeName.QUERY_WORKER,
                     tool_call_id=str(uuid.uuid4()),
                 )
             ]
