@@ -27,6 +27,7 @@ src/
   prompts/     YAML prompt registry.
   schema/      Shared state and structured output schemas.
   tools/       RAG, web research, OCR-adjacent helpers, and formatting tools.
+  ingestion/   PDF parsing, OCR, and FAISS vector-store creation.
 scripts/       Standalone utilities such as PDF ingestion and naive RAG debugging.
 ```
 

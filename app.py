@@ -5,6 +5,7 @@ import re
 import os 
 
 # --- Project imports ---
+import config
 from src.graph.factory import get_graph_app
 from src.schema.constants import NodeName, SimpleQuery, WorkflowSignal
 from src.schema.state import AgentState
@@ -26,6 +27,18 @@ This app is a multi-agent Q&A system built with LangGraph. Enter a question and 
 - **Team Answer**: Generates and reviews the final answer from the collected context.
 """)
 
+with st.sidebar:
+    st.header("Runtime")
+    st.caption("Current local configuration")
+    st.metric("Web research", "Enabled" if config.ENABLE_WEB_RESEARCH else "Disabled")
+    st.metric("Vector store", config.VECTOR_STORE_PATH)
+    st.metric("OCR language", config.OCR_LANG)
+
+    if st.button("Reset chat", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.thread_id = str(uuid.uuid4())
+        st.rerun()
+
 # --- Load LangGraph app ---
 app = get_graph_app()
 
@@ -40,63 +53,92 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# --- Helper Function for Progress Tracking ---
-def parse_progress(messages: List[Dict[str, Any]]) -> str:
-    """Build real-time progress text from the message list."""
-    progress_text = "### 🏃‍♂️ Progress\n"
-    team1_status, team2_status, team3_status = "⏳ Analyzing question...\n", "⏳ Waiting...\n", "⏳ Waiting...\n"
-    rag_query = ""
-    team1_failed = False
-
-    for msg in messages:
-        # Analyze Team Query status.
-        if msg.name == NodeName.QUERY_EVALUATOR:
-            if msg.content == WorkflowSignal.PASS:
-                team1_status = "✅ Done\n"
-                rag_query = msg.additional_kwargs.get("best_rag_query", "")
-            else:
-                team1_status = f"❌ Failed ({msg.content})\n"
-                team1_failed = True
-    
-    progress_text += f"**Team Query (Question Analysis)**: {team1_status}\n"
-    if rag_query:
-        progress_text += f"   - Best search query: `{rag_query}`\n\n"
-
-    if team1_status == "✅ Done\n":
-        team2_started = any(m.name in [NodeName.RAG_SEARCH_RESULT, NodeName.WEB_SEARCH_RESULT] for m in messages)
-        team2_evaluated = any(m.name == NodeName.RETRIEVAL_EVALUATOR for m in messages)
-
-        if not team2_started:
-             team2_status = "⏳ Collecting data...\n"
-        
-        if team2_evaluated:
-            team2_eval_msg = next((m for m in reversed(messages) if m.name == NodeName.RETRIEVAL_EVALUATOR), None)
-            if team2_eval_msg and team2_eval_msg.content == WorkflowSignal.PASS:
-                team2_status = "✅ Done\n"
-            else:
-                team2_status = f"❌ Failed ({team2_eval_msg.content if team2_eval_msg else 'N/A'})\n"
-        
-        progress_text += f"**Team Search (Information Retrieval)**: {team2_status}\n"
-
-        if team2_status == "✅ Done\n":
-            team3_evaluated = any(m.name == NodeName.ANSWER_EVALUATOR for m in messages)
-            if not team3_evaluated:
-                team3_status = "⏳ Generating answer...\n"
-            else:
-                team3_eval_msg = next((m for m in reversed(messages) if m.name == NodeName.ANSWER_EVALUATOR), None)
-                if team3_eval_msg and team3_eval_msg.content == WorkflowSignal.PASS:
-                    team3_status = "✅ Done\n"
-                else:
-                    team3_status = f"❌ Failed ({team3_eval_msg.content if team3_eval_msg else 'N/A'})\n"
-            
-            progress_text += f"**Team Answer (Answer Generation)**: {team3_status}\n"
-
-    elif team1_failed:
-        progress_text += "**Team Search (Information Retrieval)**: 🛑 Stopped\n\n"
-        progress_text += "**Team Answer (Answer Generation)**: 🛑 Stopped\n\n"
+def _last_named_message(messages: List[Any], name: str):
+    return next((msg for msg in reversed(messages) if getattr(msg, "name", None) == name), None)
 
 
-    return progress_text
+def summarize_progress(messages: List[Any]) -> Dict[str, Any]:
+    """Build structured progress details from LangGraph messages."""
+    query_eval = _last_named_message(messages, NodeName.QUERY_EVALUATOR)
+    retrieval_eval = _last_named_message(messages, NodeName.RETRIEVAL_EVALUATOR)
+    answer_eval = _last_named_message(messages, NodeName.ANSWER_EVALUATOR)
+    rag_result = _last_named_message(messages, NodeName.RAG_SEARCH_RESULT)
+    web_result = _last_named_message(messages, NodeName.WEB_SEARCH_RESULT)
+    answer_started = any(isinstance(msg, AIMessage) for msg in messages)
+
+    is_simple = False
+    best_query = ""
+    output_format = ""
+    if query_eval and query_eval.content == WorkflowSignal.PASS:
+        best_query = query_eval.additional_kwargs.get("best_rag_query", "")
+        output_format = ", ".join(query_eval.additional_kwargs.get("output_format", []))
+        is_simple = not retrieval_eval and not rag_result and answer_started
+
+    rag_count = 0
+    web_count = 0
+    if retrieval_eval:
+        rag_count = retrieval_eval.additional_kwargs.get("accepted_rag", 0)
+        web_count = retrieval_eval.additional_kwargs.get("accepted_web", 0)
+
+    return {
+        "query_eval": query_eval,
+        "retrieval_eval": retrieval_eval,
+        "answer_eval": answer_eval,
+        "rag_result": rag_result,
+        "web_result": web_result,
+        "answer_started": answer_started,
+        "is_simple": is_simple,
+        "best_query": best_query,
+        "output_format": output_format,
+        "rag_count": rag_count,
+        "web_count": web_count,
+    }
+
+
+def render_progress(messages: List[Any]) -> None:
+    summary = summarize_progress(messages)
+
+    st.markdown("### Progress")
+    cols = st.columns(3)
+
+    query_eval = summary["query_eval"]
+    query_state = "Running" if not query_eval else ("Done" if query_eval.content == WorkflowSignal.PASS else "Failed")
+    cols[0].metric("Query Team", query_state)
+
+    retrieval_eval = summary["retrieval_eval"]
+    if summary["is_simple"]:
+        retrieval_state = "Skipped"
+    elif retrieval_eval:
+        retrieval_state = "Done" if retrieval_eval.content == WorkflowSignal.PASS else "Stopped"
+    elif summary["rag_result"] or summary["web_result"]:
+        retrieval_state = "Running"
+    elif query_eval and query_eval.content == WorkflowSignal.PASS:
+        retrieval_state = "Pending"
+    else:
+        retrieval_state = "Waiting"
+    cols[1].metric("Retrieval Team", retrieval_state)
+
+    answer_eval = summary["answer_eval"]
+    if answer_eval:
+        answer_state = "Done" if answer_eval.content == WorkflowSignal.PASS else "Needs revision"
+    elif summary["answer_started"]:
+        answer_state = "Running"
+    else:
+        answer_state = "Waiting"
+    cols[2].metric("Answer Team", answer_state)
+
+    details = []
+    if summary["best_query"]:
+        details.append(f"Best query: `{summary['best_query']}`")
+    if summary["output_format"]:
+        details.append(f"Output format: `{summary['output_format']}`")
+    if retrieval_eval:
+        details.append(f"Accepted docs: RAG `{summary['rag_count']}`, Web `{summary['web_count']}`")
+    if summary["is_simple"]:
+        details.append("Retrieval skipped because this was classified as a simple query.")
+
+    if details:
+        st.markdown("\n".join(f"- {detail}" for detail in details))
 
 # --- Main flow: process user input and run graph ---
 if prompt := st.chat_input("Enter your question."):
@@ -134,8 +176,8 @@ if prompt := st.chat_input("Enter your question."):
                 final_state_messages = messages
                 
                 # Update progress from messages.
-                progress_text = parse_progress(messages)
-                progress_placeholder.markdown(progress_text)
+                with progress_placeholder.container():
+                    render_progress(messages)
                 
             # Process final result.
             if final_state_messages:
