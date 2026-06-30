@@ -17,3 +17,4 @@ matplotlib
 uvicorn
 mcp[cli]
 PyYAML
+pytest

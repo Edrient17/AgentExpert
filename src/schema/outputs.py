@@ -8,13 +8,13 @@ class QuestionProcessingResult(BaseModel):
     q_en_transformed: str = Field(description="A clear English rewrite of the user question.")
     rag_queries: List[str] = Field(
         description="2-4 English RAG search query candidates.",
-        min_items=2,
-        max_items=4,
+        min_length=2,
+        max_length=4,
     )
     output_format: List[str] = Field(
         description="Requested output format as [type, language].",
-        min_items=2,
-        max_items=2,
+        min_length=2,
+        max_length=2,
     )
 
 
